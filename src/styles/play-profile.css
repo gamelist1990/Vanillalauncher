@@ -1,0 +1,110 @@
+.play-profile-cards {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr));
+}
+
+.play-profile-card {
+  min-width: 0;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(20, 24, 32, 0.94);
+  color: #eef3f9;
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.play-profile-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(88, 154, 255, 0.3);
+  box-shadow: 0 14px 28px rgba(9, 14, 22, 0.35);
+}
+
+.play-profile-card.is-selected {
+  border-color: rgba(74, 168, 92, 0.44);
+  box-shadow: 0 14px 30px rgba(74, 168, 92, 0.2);
+}
+
+.play-profile-visual {
+  position: relative;
+  min-height: 204px;
+  background: center / cover no-repeat;
+  display: grid;
+  align-content: space-between;
+  padding: 10px;
+}
+
+.play-profile-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.play-profile-top .badge {
+  background: rgba(15, 19, 26, 0.62);
+  color: #f1f4fa;
+  border-color: rgba(241, 244, 250, 0.2);
+}
+
+.play-profile-icon-wrap {
+  display: grid;
+  place-items: center;
+}
+
+.play-profile-icon {
+  width: 86px;
+  height: 86px;
+  border-radius: 16px;
+  object-fit: cover;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(16, 20, 26, 0.75);
+}
+
+.play-profile-overlay-actions {
+  display: flex;
+  gap: 8px;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.play-profile-card:hover .play-profile-overlay-actions,
+.play-profile-card:focus-within .play-profile-overlay-actions,
+.play-profile-card.is-selected .play-profile-overlay-actions {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.play-profile-overlay-actions > button {
+  flex: 1 1 auto;
+  min-height: 40px;
+  padding: 8px 12px;
+}
+
+.play-profile-copy {
+  padding: 12px;
+  display: grid;
+  gap: 4px;
+  background: linear-gradient(180deg, rgba(25, 31, 42, 0.86), rgba(20, 25, 35, 0.9));
+}
+
+.play-profile-copy strong {
+  font-family: var(--display);
+  font-size: 1.06rem;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+.play-profile-copy span {
+  color: rgba(236, 241, 248, 0.78);
+  font-size: 0.85rem;
+}
+
+@media (hover: none) {
+  .play-profile-overlay-actions {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

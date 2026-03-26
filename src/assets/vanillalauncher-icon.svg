@@ -1,0 +1,65 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="surface" x1="76" y1="64" x2="438" y2="452" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" />
+      <stop offset="0.58" stop-color="#F1F7FF" />
+      <stop offset="1" stop-color="#EBF7EE" />
+    </linearGradient>
+    <linearGradient id="topFace" x1="160" y1="144" x2="314" y2="242" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8DDEA0" />
+      <stop offset="1" stop-color="#4AAA60" />
+    </linearGradient>
+    <linearGradient id="frontFace" x1="148" y1="216" x2="268" y2="378" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8C6A4E" />
+      <stop offset="1" stop-color="#5B4434" />
+    </linearGradient>
+    <linearGradient id="sideFace" x1="280" y1="188" x2="392" y2="360" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#83BEFF" />
+      <stop offset="1" stop-color="#447FD8" />
+    </linearGradient>
+    <linearGradient id="glow" x1="170" y1="118" x2="248" y2="190" gradientUnits="userSpaceOnUse">
+      <stop stop-color="white" stop-opacity="0.96" />
+      <stop offset="1" stop-color="white" stop-opacity="0" />
+    </linearGradient>
+    <filter id="panelShadow" x="38" y="40" width="436" height="444" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix" />
+      <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha" />
+      <feOffset dy="14" />
+      <feGaussianBlur stdDeviation="16" />
+      <feColorMatrix type="matrix" values="0 0 0 0 0.227451 0 0 0 0 0.333333 0 0 0 0 0.47451 0 0 0 0.16 0" />
+      <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_1_1" />
+      <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_1_1" result="shape" />
+    </filter>
+    <filter id="cubeShadow" x="92" y="102" width="330" height="314" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix" />
+      <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha" />
+      <feOffset dy="12" />
+      <feGaussianBlur stdDeviation="12" />
+      <feColorMatrix type="matrix" values="0 0 0 0 0.203922 0 0 0 0 0.341176 0 0 0 0 0.270588 0 0 0 0.2 0" />
+      <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_1_1" />
+      <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_1_1" result="shape" />
+    </filter>
+  </defs>
+
+  <g filter="url(#panelShadow)">
+    <rect x="54" y="54" width="404" height="404" rx="120" fill="url(#surface)" />
+    <rect x="54" y="54" width="404" height="404" rx="120" stroke="#D9E6F3" stroke-width="8" />
+  </g>
+
+  <g filter="url(#cubeShadow)">
+    <path d="M148 188L278 138L382 190L252 242L148 188Z" fill="url(#topFace)" />
+    <path d="M148 188L252 242V358L148 304V188Z" fill="url(#frontFace)" />
+    <path d="M252 242L382 190V306L252 358V242Z" fill="url(#sideFace)" />
+
+    <path d="M172 191L278 150L350 186L244 226L172 191Z" fill="url(#glow)" />
+
+    <path d="M190 204L221 192L245 202L213 214L190 204Z" fill="#D9F4E0" fill-opacity="0.9" />
+    <path d="M253 179L285 167L310 177L279 189L253 179Z" fill="#D8F3DE" fill-opacity="0.86" />
+
+    <path d="M182 239L182 327L256 283L182 239Z" fill="white" />
+    <path d="M182 239L182 327L222 303V262L182 239Z" fill="#E7EEF7" fill-opacity="0.28" />
+
+    <path d="M252 242L252 358" stroke="#E7F1FB" stroke-opacity="0.28" stroke-width="5" />
+    <path d="M148 188L252 242L382 190" stroke="#395B4A" stroke-opacity="0.18" stroke-width="6" stroke-linejoin="round" />
+  </g>
+</svg>

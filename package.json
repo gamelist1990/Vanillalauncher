@@ -1,0 +1,33 @@
+{
+  "name": "vanillalauncher",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "auth:probe": "bun run scripts/debug-xbox-token-probe.ts --list --top 12",
+    "auth:probe:test": "bun run scripts/debug-xbox-token-probe.ts --top 8 --test 6 --delay 1500",
+    "auth:probe:com": "bun run scripts/debug-xbl-com-probe.ts",
+    "auth:probe:com:test": "bun run scripts/debug-xbl-com-probe.ts --login-test",
+    "auth:probe:rps": "bun run scripts/debug-xbox-rps-probe.ts --max-attempts 12 --delay 700"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-opener": "^2",
+    "@types/node": "^25.5.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.6.0",
+    "typescript": "~5.8.3",
+    "vite": "^7.0.4",
+    "@tauri-apps/cli": "^2"
+  }
+}

@@ -1,0 +1,32 @@
+html,
+body,
+#root,
+.sidebar,
+.main-column,
+.play-profile-cards,
+.discover-list,
+.mod-list,
+.action-list,
+.toolbar-actions,
+.quick-strip,
+.loader-grid {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+#root::-webkit-scrollbar,
+.sidebar::-webkit-scrollbar,
+.main-column::-webkit-scrollbar,
+.play-profile-cards::-webkit-scrollbar,
+.discover-list::-webkit-scrollbar,
+.mod-list::-webkit-scrollbar,
+.action-list::-webkit-scrollbar,
+.toolbar-actions::-webkit-scrollbar,
+.quick-strip::-webkit-scrollbar,
+.loader-grid::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}

@@ -1,0 +1,47 @@
+.hero-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1.28fr) minmax(280px, 0.72fr);
+  gap: 18px;
+  min-height: min(340px, 58vh);
+  padding: clamp(20px, 2.5vw, 30px);
+  border-radius: 28px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0.8) 48%, rgba(232, 246, 236, 0.82) 100%),
+    url("/launcher-hero.jpg") center / cover no-repeat;
+  overflow: hidden;
+}
+
+.hero-copy {
+  max-width: min(700px, 100%);
+}
+
+.hero-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.hero-summary {
+  display: grid;
+  gap: 10px;
+}
+
+.hero-title-editable {
+  cursor: text;
+  width: fit-content;
+}
+
+.hero-title-editable:hover {
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-decoration-color: rgba(74, 168, 92, 0.44);
+  text-underline-offset: 6px;
+}
