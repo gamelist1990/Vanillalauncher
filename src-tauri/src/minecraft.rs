@@ -773,8 +773,17 @@ pub fn delete_custom_profile(profile_id: &str) -> Result<(), String> {
         return Err(format!("起動構成 {profile_id} が見つかりません。"));
     };
 
-    let removed_game_dir = removed_profile
-        .as_object()
+    let removed_profile_object = removed_profile.as_object();
+    let removed_profile_name = removed_profile_object
+        .and_then(|profile| profile.get("name"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let removed_last_version_id = removed_profile_object
+        .and_then(|profile| profile.get("lastVersionId"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+
+    let removed_game_dir = removed_profile_object
         .and_then(|profile| profile.get("gameDir"))
         .and_then(Value::as_str)
         .map(|value| resolve_game_dir(&minecraft_root, Some(value)));
@@ -793,6 +802,49 @@ pub fn delete_custom_profile(profile_id: &str) -> Result<(), String> {
         if game_dir.starts_with(&app_managed_root) && game_dir.exists() {
             fs::remove_dir_all(&game_dir).map_err(|error| {
                 format!("{} を削除できませんでした: {error}", game_dir.display())
+            })?;
+        }
+    }
+
+    cleanup_managed_instance_dirs(
+        &minecraft_root,
+        profile_id,
+        removed_profile_name.as_deref(),
+        removed_last_version_id.as_deref(),
+    )?;
+
+    Ok(())
+}
+
+fn cleanup_managed_instance_dirs(
+    minecraft_root: &Path,
+    profile_id: &str,
+    profile_name: Option<&str>,
+    last_version_id: Option<&str>,
+) -> Result<(), String> {
+    let instances_root = minecraft_root.join(".vanillalauncher").join("instances");
+    if !instances_root.exists() {
+        return Ok(());
+    }
+
+    let mut candidates: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    if let Some(name) = profile_name {
+        let loader = infer_loader(last_version_id, Some(name));
+        candidates.insert(profile_instance_dir(minecraft_root, loader, name));
+    }
+
+    for loader in ["fabric", "forge", "neoforge", "quilt", "vanilla"] {
+        candidates.insert(
+            instances_root
+                .join(loader)
+                .join(sanitize_profile_id(profile_id)),
+        );
+    }
+
+    for candidate in candidates {
+        if candidate.starts_with(&instances_root) && candidate.exists() {
+            fs::remove_dir_all(&candidate).map_err(|error| {
+                format!("{} を削除できませんでした: {error}", candidate.display())
             })?;
         }
     }
@@ -1145,7 +1197,7 @@ fn seed_profile_preferences_from_vanilla(
     fs::create_dir_all(game_dir)
         .map_err(|error| format!("{} を準備できませんでした: {error}", game_dir.display()))?;
 
-    let source_options = minecraft_root.join("options.txt");
+    let source_options = vanilla_options_path(minecraft_root);
     if !source_options.exists() {
         return Ok(());
     }
@@ -1157,65 +1209,85 @@ fn seed_profile_preferences_from_vanilla(
         )
     })?;
     let target_options = game_dir.join("options.txt");
-    if target_options.exists() {
-        let target_contents = fs::read_to_string(&target_options).map_err(|error| {
+    let target_contents = if target_options.exists() {
+        fs::read_to_string(&target_options).map_err(|error| {
             format!(
                 "{} を読み込めませんでした: {error}",
                 target_options.display()
             )
+        })?
+    } else {
+        String::new()
+    };
+
+    let merged_contents = merge_vanilla_options(&target_contents, &source_contents);
+    if merged_contents != target_contents {
+        fs::write(&target_options, merged_contents).map_err(|error| {
+            format!(
+                "{} を更新できませんでした: {error}",
+                target_options.display()
+            )
         })?;
-        let merged_contents = merge_vanilla_options(&target_contents, &source_contents);
-
-        if merged_contents != target_contents {
-            fs::write(&target_options, merged_contents).map_err(|error| {
-                format!(
-                    "{} を更新できませんでした: {error}",
-                    target_options.display()
-                )
-            })?;
-        }
-
-        return Ok(());
     }
-
-    fs::write(&target_options, source_contents).map_err(|error| {
-        format!(
-            "{} に書き込めませんでした: {error}",
-            target_options.display()
-        )
-    })?;
 
     Ok(())
 }
 
+fn vanilla_options_path(minecraft_root: &Path) -> PathBuf {
+    if cfg!(target_os = "windows") {
+        if let Some(appdata) = env::var_os("APPDATA") {
+            return PathBuf::from(appdata).join(".minecraft").join("options.txt");
+        }
+    }
+
+    minecraft_root.join("options.txt")
+}
+
 fn merge_vanilla_options(existing_contents: &str, vanilla_contents: &str) -> String {
-    let existing_keys = parse_option_keys(existing_contents);
-    let missing_entries = vanilla_contents
+    let mut seed_values = vanilla_contents
         .lines()
         .filter_map(parse_option_line)
-        .filter(|(key, _)| should_seed_option_key(key) && !existing_keys.contains(key))
-        .map(|(key, value)| format!("{key}:{value}"))
-        .collect::<Vec<_>>();
+        .filter(|(key, _)| should_seed_option_key(key))
+        .collect::<HashMap<_, _>>();
 
-    if missing_entries.is_empty() {
+    if seed_values.is_empty() {
         return existing_contents.to_string();
     }
 
-    let mut merged = existing_contents.to_string();
-    if !merged.ends_with('\n') {
-        merged.push('\n');
+    let mut merged_lines = Vec::new();
+    let mut changed = false;
+
+    for line in existing_contents.lines() {
+        if let Some((key, _)) = parse_option_line(line) {
+            if should_seed_option_key(&key) {
+                if let Some(new_value) = seed_values.remove(&key) {
+                    let replacement = format!("{key}:{new_value}");
+                    if line.trim() != replacement {
+                        changed = true;
+                    }
+                    merged_lines.push(replacement);
+                    continue;
+                }
+            }
+        }
+
+        merged_lines.push(line.to_string());
     }
-    merged.push_str(&missing_entries.join("\n"));
+
+    if !seed_values.is_empty() {
+        changed = true;
+        for (key, value) in seed_values {
+            merged_lines.push(format!("{key}:{value}"));
+        }
+    }
+
+    if !changed {
+        return existing_contents.to_string();
+    }
+
+    let mut merged = merged_lines.join("\n");
     merged.push('\n');
     merged
-}
-
-fn parse_option_keys(contents: &str) -> std::collections::HashSet<String> {
-    contents
-        .lines()
-        .filter_map(parse_option_line)
-        .map(|(key, _)| key)
-        .collect()
 }
 
 fn parse_option_line(line: &str) -> Option<(String, String)> {
@@ -1232,7 +1304,12 @@ fn should_seed_option_key(key: &str) -> bool {
     key.starts_with("key_")
         || key.starts_with("mouse")
         || key.starts_with("soundCategory_")
-        || matches!(key, "lang" | "soundDevice" | "showSubtitles" | "enableSubtitles")
+        || matches!(
+            key,
+            "lang"
+                | "fov"
+                | "fovEffectScale"
+        )
 }
 
 pub fn normalize_loader(loader: Option<&str>) -> &'static str {
