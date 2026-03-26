@@ -83,6 +83,15 @@ pub fn is_profile_launch_active(profile_id: &str) -> bool {
     launch_registry::is_profile_launch_active(profile_id)
 }
 
+fn suppress_console_window(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW
+        command.creation_flags(0x08000000);
+    }
+}
+
 fn record_profile_launch(profile_id: &str, pid: u32) -> Result<(), String> {
     launch_registry::record_profile_launch(profile_id, pid)
 }
@@ -208,6 +217,7 @@ pub async fn launch_profile_directly(
         .args(&launch_context.arguments)
         .current_dir(&launch_context.game_dir)
         .stdin(Stdio::null());
+    suppress_console_window(&mut command);
     if cfg!(not(debug_assertions)) {
         command.stdout(Stdio::null()).stderr(Stdio::null());
     }

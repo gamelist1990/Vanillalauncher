@@ -1232,7 +1232,7 @@ fn should_seed_option_key(key: &str) -> bool {
     key.starts_with("key_")
         || key.starts_with("mouse")
         || key.starts_with("soundCategory_")
-        || matches!(key, "soundDevice" | "showSubtitles" | "enableSubtitles")
+        || matches!(key, "lang" | "soundDevice" | "showSubtitles" | "enableSubtitles")
 }
 
 pub fn normalize_loader(loader: Option<&str>) -> &'static str {

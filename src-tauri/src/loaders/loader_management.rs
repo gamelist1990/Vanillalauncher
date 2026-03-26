@@ -1053,7 +1053,8 @@ fn run_quilt_installer_in_stage(
 ) -> Result<String, String> {
     let stage_root = prepare_stage_root("quilt")?;
     let java = find_java_executable()?;
-    let output = Command::new(java)
+    let mut command = Command::new(java);
+    command
         .arg("-jar")
         .arg(installer_path)
         .arg("install")
@@ -1062,7 +1063,9 @@ fn run_quilt_installer_in_stage(
         .arg(loader_version)
         .arg(format!("--install-dir={}", stage_root.display()))
         .arg("--no-profile")
-        .current_dir(&stage_root)
+        .current_dir(&stage_root);
+    suppress_console_window(&mut command);
+    let output = command
         .output()
         .map_err(|error| format!("Quilt Installer を実行できませんでした: {error}"))?;
 
@@ -1093,6 +1096,7 @@ fn run_staged_installer(
         command.arg(argument);
     }
     command.arg(&stage_root).current_dir(&stage_root);
+    suppress_console_window(&mut command);
     let output = command.output().map_err(|error| {
         format!(
             "{} Installer を実行できませんでした: {error}",
@@ -1336,7 +1340,8 @@ fn run_fabric_installer(
 ) -> Result<(), String> {
     ensure_launcher_profiles_file(minecraft_root)?;
     let java = find_java_executable()?;
-    let output = Command::new(java)
+    let mut command = Command::new(java);
+    command
         .arg("-jar")
         .arg(installer_path)
         .arg("client")
@@ -1346,7 +1351,9 @@ fn run_fabric_installer(
         .arg(minecraft_version)
         .arg("-loader")
         .arg(loader_version)
-        .arg("-noprofile")
+        .arg("-noprofile");
+    suppress_console_window(&mut command);
+    let output = command
         .output()
         .map_err(|error| format!("Fabric Installer を実行できませんでした: {error}"))?;
 

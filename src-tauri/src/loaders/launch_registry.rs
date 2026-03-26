@@ -69,9 +69,17 @@ fn save_active_launch_registry(registry: &ActiveLaunchRegistry) -> Result<(), St
 
 fn is_process_running(pid: u32) -> bool {
     if cfg!(target_os = "windows") {
-        let output = Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
-            .output();
+        let mut command = Command::new("tasklist");
+        command.args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"]);
+
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            // CREATE_NO_WINDOW
+            command.creation_flags(0x08000000);
+        }
+
+        let output = command.output();
 
         return output
             .ok()
