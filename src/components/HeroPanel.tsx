@@ -109,7 +109,7 @@ export function HeroPanel({
             <button
               className="secondary-button"
               onClick={onOpenOfficialLauncher}
-              disabled={!profile || !launcherAvailable || openingLauncher}
+              disabled={!profile || !launcherAvailable || openingLauncher || busy}
             >
               {openingLauncher ? "Launcher 起動中..." : "公式 Launcher"}
             </button>
@@ -171,6 +171,7 @@ export function HeroPanel({
         switchingLocalId={switchingAccountLocalId}
         scanning={scanningAccounts}
         scanProgress={scanProgress}
+        interactionDisabled={busy || openingLauncher}
         onClose={() => setAccountPanelOpen(false)}
         onSelectAccount={(localId) => void handleSelectAccount(localId)}
         onScanAccounts={onScanLauncherAccounts}

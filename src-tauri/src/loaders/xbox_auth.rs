@@ -5,9 +5,11 @@ use std::{
     collections::{HashMap, HashSet},
     env, fs,
     path::{Path, PathBuf},
+    sync::OnceLock,
     time::Duration,
 };
 use tauri::AppHandle;
+use tokio::sync::Mutex;
 
 use super::MOJANG_USER_AGENT;
 
@@ -29,22 +31,17 @@ pub(super) struct CachedXboxAccountHint {
     pub(super) source_path: PathBuf,
 }
 
+static XBOX_AUTH_EXCHANGE_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn xbox_auth_exchange_mutex() -> &'static Mutex<()> {
+    XBOX_AUTH_EXCHANGE_MUTEX.get_or_init(|| Mutex::new(()))
+}
+
 #[derive(Debug, Clone)]
 struct TokenbrokerFieldMatch {
     pattern: String,
     value: String,
     gap: Option<usize>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct XboxRpsLastSuccessState {
-    source_path: String,
-    variant_label: String,
-    relying_party: String,
-    ticket_prefix: String,
-    expires_at: String,
-    saved_at: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -89,15 +86,15 @@ struct XboxXstsAuthorizeResponse {
 }
 
 #[derive(Debug, Clone)]
-struct XboxProfileIdentity {
-    gamer_tag: Option<String>,
-    xuid: Option<String>,
+pub(super) struct XboxProfileIdentity {
+    pub(super) gamer_tag: Option<String>,
+    pub(super) xuid: Option<String>,
 }
 
 #[derive(Debug, Clone)]
-struct RpsTicketExchangeResult {
-    minecraft_access_token: Option<String>,
-    xbox_identity: Option<XboxProfileIdentity>,
+pub(super) struct RpsTicketExchangeResult {
+    pub(super) minecraft_access_token: Option<String>,
+    pub(super) xbox_identity: Option<XboxProfileIdentity>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -117,6 +114,42 @@ struct LocalLauncherEntitlementItem {
     name: String,
     #[serde(default)]
     source: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+struct SecureLaunchTokenCacheFile {
+    version: u32,
+    #[serde(default)]
+    entries: HashMap<String, SecureLaunchTokenCacheEntry>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct SecureLaunchTokenCacheEntry {
+    access_token: String,
+    #[serde(default)]
+    expires_at: Option<String>,
+    username: String,
+    uuid: String,
+    #[serde(default)]
+    xuid: Option<String>,
+    #[serde(default)]
+    local_id: Option<String>,
+    #[serde(default)]
+    user_properties: Option<String>,
+    #[serde(default)]
+    user_type: Option<String>,
+    saved_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct SecureLaunchToken {
+    pub(super) access_token: String,
+    pub(super) expires_at: Option<String>,
+    pub(super) username: String,
+    pub(super) uuid: String,
+    pub(super) xuid: String,
+    pub(super) user_properties: String,
+    pub(super) user_type: String,
 }
 
 pub(super) fn read_cached_xbox_identity_tokens() -> Result<Vec<CachedXboxToken>, String> {
@@ -251,8 +284,7 @@ pub(super) async fn read_cached_xbox_launcher_accounts(
     let java_access_hints = read_local_launcher_java_access_hints();
     let cached_tokens = read_cached_xbox_identity_tokens()?;
     let max_attempts = cached_tokens.len().clamp(12, 48);
-    let (attempts, _used_saved_state) =
-        build_prioritized_rps_attempts(&cached_tokens, max_attempts);
+    let attempts = build_prioritized_rps_attempts(&cached_tokens, max_attempts);
     let mut discovered = discovered;
     let mut discovered_indices_by_source = HashMap::<PathBuf, Vec<usize>>::new();
     let mut resolved_sources = HashSet::<PathBuf>::new();
@@ -336,25 +368,17 @@ pub(super) async fn read_cached_xbox_launcher_accounts(
             continue;
         };
         let Some((verified_profile, matched_account, used_fallback)) =
-            resolve_verified_minecraft_profile(
+            resolve_verified_minecraft_profile_with_xbox_identity(
                 &access_token,
                 &format!("{context} -> minecraft/profile"),
                 launcher_accounts,
                 &java_access_hints,
+                exchange.xbox_identity.as_ref(),
             )
             .await
         else {
             continue;
         };
-        let matched_account = matched_account.or_else(|| {
-            match_local_launcher_account_by_xuid(
-                launcher_accounts,
-                exchange
-                    .xbox_identity
-                    .as_ref()
-                    .and_then(|identity| identity.xuid.as_deref()),
-            )
-        });
 
         for index in indices {
             let (_, account) = &mut discovered[index];
@@ -490,29 +514,18 @@ fn merge_launcher_account_for_scan(
 pub(super) fn build_prioritized_rps_attempts(
     cached_tokens: &[CachedXboxToken],
     max_attempts: usize,
-) -> (Vec<(String, String, CachedXboxToken)>, bool) {
+) -> Vec<(String, String, CachedXboxToken)> {
+    build_prioritized_rps_attempts_for_account(cached_tokens, max_attempts, None)
+}
+
+pub(super) fn build_prioritized_rps_attempts_for_account(
+    cached_tokens: &[CachedXboxToken],
+    max_attempts: usize,
+    preferred_account: Option<&crate::minecraft::LauncherAccount>,
+) -> Vec<(String, String, CachedXboxToken)> {
     let mut attempts: Vec<(i32, String, String, CachedXboxToken)> = Vec::new();
     let mut seen = HashSet::new();
-    let mut used_saved_state = false;
-
-    if let Some(state) = load_xbox_rps_state() {
-        if !is_saved_state_expired(&state) {
-            for token in cached_tokens {
-                if token.source_path.to_string_lossy() != state.source_path {
-                    continue;
-                }
-                for (label, candidate) in build_xbox_token_variants(&token.token) {
-                    if label != state.variant_label || !candidate.contains("t=") {
-                        continue;
-                    }
-                    if seen.insert(candidate.clone()) {
-                        attempts.push((10_000, label, candidate, token.clone()));
-                        used_saved_state = true;
-                    }
-                }
-            }
-        }
-    }
+    let preferred_source_scores = preferred_cached_xbox_source_scores(preferred_account);
 
     for token in cached_tokens {
         for (label, candidate) in build_xbox_token_variants(&token.token) {
@@ -522,7 +535,11 @@ pub(super) fn build_prioritized_rps_attempts(
             if !seen.insert(candidate.clone()) {
                 continue;
             }
-            let score = rank_rps_variant(token, &label, &candidate);
+            let score = rank_rps_variant(token, &label, &candidate)
+                + preferred_source_scores
+                    .get(&token.source_path)
+                    .copied()
+                    .unwrap_or_default();
             attempts.push((score, label, candidate, token.clone()));
         }
     }
@@ -534,33 +551,128 @@ pub(super) fn build_prioritized_rps_attempts(
         .map(|(_score, label, candidate, token)| (label, candidate, token))
         .collect();
 
-    (bounded, used_saved_state)
+    bounded
 }
 
-pub(super) fn persist_xbox_rps_success_state(
-    token: &CachedXboxToken,
-    label: &str,
-    candidate: &str,
-) {
-    let expires_at = token
-        .expires_at
-        .unwrap_or_else(chrono::Utc::now)
-        .to_rfc3339();
-    let state = XboxRpsLastSuccessState {
-        source_path: token.source_path.display().to_string(),
-        variant_label: label.to_string(),
-        relying_party: "rp://api.minecraftservices.com/".to_string(),
-        ticket_prefix: candidate.chars().take(24).collect(),
-        expires_at,
-        saved_at: chrono::Utc::now().to_rfc3339(),
+fn preferred_cached_xbox_source_scores(
+    preferred_account: Option<&crate::minecraft::LauncherAccount>,
+) -> HashMap<PathBuf, i32> {
+    let Some(preferred_account) = preferred_account else {
+        return HashMap::new();
     };
 
-    if let Err(error) = save_xbox_rps_state(&state) {
+    let hints = match read_cached_xbox_account_hints_raw() {
+        Ok(hints) => hints,
+        Err(error) => {
+            app_log::append_log(
+                "WARN",
+                format!(
+                    "failed to read cached xbox account hints while prioritizing attempts: {error}"
+                ),
+            );
+            return HashMap::new();
+        }
+    };
+    let scores = preferred_cached_xbox_source_scores_from_hints(Some(preferred_account), &hints);
+    if !scores.is_empty() {
         app_log::append_log(
-            "WARN",
-            format!("failed to save xbox-rps state after successful auth: {error}"),
+            "INFO",
+            format!(
+                "prioritizing cached Xbox sources for selected account matched_sources={}",
+                scores.len()
+            ),
         );
     }
+    scores
+}
+
+fn preferred_cached_xbox_source_scores_from_hints(
+    preferred_account: Option<&crate::minecraft::LauncherAccount>,
+    hints: &[CachedXboxAccountHint],
+) -> HashMap<PathBuf, i32> {
+    let Some(preferred_account) = preferred_account else {
+        return HashMap::new();
+    };
+
+    let mut scores = HashMap::new();
+    for hint in hints {
+        let score = cached_xbox_account_hint_match_score(hint, preferred_account);
+        if score <= 0 {
+            continue;
+        }
+        scores
+            .entry(hint.source_path.clone())
+            .and_modify(|current: &mut i32| *current = (*current).max(score))
+            .or_insert(score);
+    }
+    scores
+}
+
+fn cached_xbox_account_hint_match_score(
+    hint: &CachedXboxAccountHint,
+    preferred_account: &crate::minecraft::LauncherAccount,
+) -> i32 {
+    let preferred_display_name =
+        crate::minecraft::preferred_launcher_account_display_name(preferred_account);
+    let mut score = 0;
+
+    if account_identity_matches(
+        hint.local_id.as_deref(),
+        preferred_account.local_id.as_deref(),
+    ) {
+        score += 5_000;
+    }
+    if account_identity_matches(hint.xuid.as_deref(), preferred_account.xuid.as_deref()) {
+        score += 4_200;
+    }
+    if account_identity_matches(
+        hint.username.as_deref(),
+        preferred_account.username.as_deref(),
+    ) {
+        score += 3_200;
+    }
+    if account_identity_matches(
+        hint.gamer_tag.as_deref(),
+        preferred_account.gamer_tag.as_deref(),
+    ) {
+        score += 2_600;
+    }
+    if account_identity_matches(
+        hint.display_name.as_deref(),
+        preferred_account.gamer_tag.as_deref(),
+    ) {
+        score += 2_200;
+    }
+    if account_identity_matches(
+        hint.display_name.as_deref(),
+        preferred_display_name.as_deref(),
+    ) {
+        score += 1_800;
+    }
+
+    score
+}
+
+fn account_identity_matches(left: Option<&str>, right: Option<&str>) -> bool {
+    let Some(left) = normalize_account_identity_value(left) else {
+        return false;
+    };
+    let Some(right) = normalize_account_identity_value(right) else {
+        return false;
+    };
+    left == right
+}
+
+fn normalize_account_identity_value(value: Option<&str>) -> Option<String> {
+    let value = value.map(str::trim).filter(|entry| !entry.is_empty())?;
+    if value.len() >= 32
+        && value
+            .chars()
+            .all(|character| character.is_ascii_hexdigit() || character == '-')
+    {
+        return Some(normalize_uuid_value(value).to_ascii_lowercase());
+    }
+    Some(value.to_ascii_lowercase())
 }
 
 pub(super) fn preview_token(token: &str) -> String {
@@ -568,10 +680,11 @@ pub(super) fn preview_token(token: &str) -> String {
     format!("{prefix}...len={}", token.len())
 }
 
-async fn exchange_rps_ticket_for_minecraft_auth(
+pub(super) async fn exchange_rps_ticket_for_minecraft_auth(
     ticket: &str,
     context: &str,
 ) -> Option<RpsTicketExchangeResult> {
+    let _exchange_guard = xbox_auth_exchange_mutex().lock().await;
     let client = build_mojang_client()?;
 
     let user_auth_response = post_json_with_retries(
@@ -641,21 +754,12 @@ async fn exchange_rps_ticket_for_minecraft_auth(
     })
 }
 
-pub(super) async fn exchange_rps_ticket_for_minecraft_access_token(
-    ticket: &str,
-    context: &str,
-) -> Option<String> {
-    exchange_rps_ticket_for_minecraft_auth(ticket, context)
-        .await?
-        .minecraft_access_token
-}
-
 pub(super) async fn ensure_xbox_rps_state(
     app: Option<&AppHandle>,
     operation_id: Option<&str>,
 ) -> Result<XboxRpsStateResult, String> {
-    let state_path = xbox_rps_state_path();
-    let mut used_saved_state = false;
+    let state_path = String::new();
+    let used_saved_state = false;
 
     let emit_auth_progress = |title: &str, detail: String, percent: f64| {
         if let (Some(app), Some(operation_id)) = (app, operation_id) {
@@ -672,7 +776,7 @@ pub(super) async fn ensure_xbox_rps_state(
         );
         return Ok(XboxRpsStateResult {
             message: "利用可能な TokenBroker 候補が見つかりませんでした。".to_string(),
-            state_path: state_path.display().to_string(),
+            state_path: state_path.clone(),
             used_saved_state,
             refreshed: false,
             succeeded: false,
@@ -683,8 +787,20 @@ pub(super) async fn ensure_xbox_rps_state(
         });
     }
 
-    let (bounded, used_saved) = build_prioritized_rps_attempts(&cached_tokens, 12);
-    used_saved_state = used_saved;
+    let preferred_account = match crate::minecraft::read_active_launcher_account() {
+        Ok(account) => account,
+        Err(error) => {
+            app_log::append_log(
+                "WARN",
+                format!(
+                    "failed to read active launcher account while probing xbox-rps state: {error}"
+                ),
+            );
+            None
+        }
+    };
+    let bounded =
+        build_prioritized_rps_attempts_for_account(&cached_tokens, 12, preferred_account.as_ref());
     let total_attempts = bounded.len();
 
     if total_attempts == 0 {
@@ -695,7 +811,7 @@ pub(super) async fn ensure_xbox_rps_state(
         );
         return Ok(XboxRpsStateResult {
             message: "有効な Xbox RPS 候補を構築できませんでした。".to_string(),
-            state_path: state_path.display().to_string(),
+            state_path: state_path.clone(),
             used_saved_state,
             refreshed: false,
             succeeded: false,
@@ -742,15 +858,17 @@ pub(super) async fn ensure_xbox_rps_state(
             ),
         );
 
-        if let Some(access_token) =
-            exchange_rps_ticket_for_minecraft_access_token(&candidate, &context).await
-        {
+        if let Some(exchange) = exchange_rps_ticket_for_minecraft_auth(&candidate, &context).await {
+            let Some(access_token) = exchange.minecraft_access_token else {
+                continue;
+            };
             let verification_context = format!("{context} -> minecraft/profile");
-            if resolve_verified_minecraft_profile(
+            if resolve_verified_minecraft_profile_with_xbox_identity(
                 &access_token,
                 &verification_context,
                 &launcher_accounts,
                 &java_access_hints,
+                exchange.xbox_identity.as_ref(),
             )
             .await
             .is_none()
@@ -772,13 +890,11 @@ pub(super) async fn ensure_xbox_rps_state(
                 percent,
             );
 
-                persist_xbox_rps_success_state(&token, &label, &candidate);
-
                 return Ok(XboxRpsStateResult {
                 message:
                     "Xbox RPS state を検証し、Minecraft Java へアクセスできる候補を保存しました。"
                         .to_string(),
-                state_path: state_path.display().to_string(),
+                state_path: state_path.clone(),
                 used_saved_state,
                 refreshed: true,
                 succeeded: true,
@@ -797,7 +913,7 @@ pub(super) async fn ensure_xbox_rps_state(
             percent,
         );
 
-        std::thread::sleep(Duration::from_millis(700));
+        tokio::time::sleep(Duration::from_millis(700)).await;
     }
 
     emit_auth_progress(
@@ -812,7 +928,7 @@ pub(super) async fn ensure_xbox_rps_state(
         message:
             "Minecraft Java へのアクセス権が確認できる Xbox RPS state を更新できませんでした。"
                 .to_string(),
-        state_path: state_path.display().to_string(),
+        state_path,
         used_saved_state,
         refreshed: false,
         succeeded: false,
@@ -844,6 +960,15 @@ pub(super) fn is_access_token_expired(token: &str, expires_at: Option<&str>) -> 
     };
 
     chrono::Utc::now().timestamp() >= expiry
+}
+
+pub(super) fn access_token_expiry_rfc3339(token: &str) -> Option<String> {
+    let payload = token.split('.').nth(1)?;
+    let decoded = decode_base64_url(payload)?;
+    let value = serde_json::from_slice::<Value>(&decoded).ok()?;
+    let expiry = value.get("exp").and_then(Value::as_i64)?;
+    let expires_at = chrono::DateTime::<chrono::Utc>::from_timestamp(expiry, 0)?;
+    Some(expires_at.to_rfc3339())
 }
 
 pub(super) async fn fetch_minecraft_profile_for_token(
@@ -1043,20 +1168,30 @@ pub(super) fn launcher_account_has_java_access_hint(
         .unwrap_or(false)
 }
 
-pub(super) async fn resolve_verified_minecraft_profile(
-    token: &str,
-    context: &str,
+fn match_local_launcher_account_with_xbox_identity(
     accounts: &[crate::minecraft::LauncherAccount],
+    verified_profile: Option<&(String, String)>,
+    token: Option<&str>,
+    xbox_identity: Option<&XboxProfileIdentity>,
+) -> Option<crate::minecraft::LauncherAccount> {
+    match_local_launcher_account(accounts, verified_profile, token).or_else(|| {
+        match_local_launcher_account_by_xuid(
+            accounts,
+            xbox_identity.and_then(|identity| identity.xuid.as_deref()),
+        )
+    })
+}
+
+fn resolve_verified_profile_or_hint(
+    verified_profile: Option<(String, String)>,
+    matched_account: Option<crate::minecraft::LauncherAccount>,
+    context: &str,
     java_access_hints: &HashMap<String, bool>,
 ) -> Option<(
     (String, String),
     Option<crate::minecraft::LauncherAccount>,
     bool,
 )> {
-    let verified_profile = fetch_minecraft_profile_for_token(token, context).await;
-    let matched_account =
-        match_local_launcher_account(accounts, verified_profile.as_ref(), Some(token));
-
     if let Some((profile_id, profile_name)) = verified_profile {
         return Some((
             (normalize_uuid_value(&profile_id), profile_name),
@@ -1082,6 +1217,53 @@ pub(super) async fn resolve_verified_minecraft_profile(
     );
 
     Some((fallback_profile, Some(matched_account), true))
+}
+
+pub(super) async fn resolve_verified_minecraft_profile(
+    token: &str,
+    context: &str,
+    accounts: &[crate::minecraft::LauncherAccount],
+    java_access_hints: &HashMap<String, bool>,
+) -> Option<(
+    (String, String),
+    Option<crate::minecraft::LauncherAccount>,
+    bool,
+)> {
+    resolve_verified_minecraft_profile_with_xbox_identity(
+        token,
+        context,
+        accounts,
+        java_access_hints,
+        None,
+    )
+    .await
+}
+
+pub(super) async fn resolve_verified_minecraft_profile_with_xbox_identity(
+    token: &str,
+    context: &str,
+    accounts: &[crate::minecraft::LauncherAccount],
+    java_access_hints: &HashMap<String, bool>,
+    xbox_identity: Option<&XboxProfileIdentity>,
+) -> Option<(
+    (String, String),
+    Option<crate::minecraft::LauncherAccount>,
+    bool,
+)> {
+    let verified_profile = fetch_minecraft_profile_for_token(token, context).await;
+    let matched_account = match_local_launcher_account_with_xbox_identity(
+        accounts,
+        verified_profile.as_ref(),
+        Some(token),
+        xbox_identity,
+    );
+
+    resolve_verified_profile_or_hint(
+        verified_profile,
+        matched_account,
+        context,
+        java_access_hints,
+    )
 }
 
 fn merge_verified_identity_into_launcher_account(
@@ -1146,35 +1328,190 @@ fn merge_xbox_identity_into_launcher_account(
     }
 }
 
-fn xbox_rps_state_path() -> PathBuf {
+fn secure_launch_token_cache_path() -> PathBuf {
     env::temp_dir()
         .join("VanillaLauncher")
-        .join("xbox-rps-last-success.json")
+        .join("launch-auth-cache.bin")
 }
 
-fn load_xbox_rps_state() -> Option<XboxRpsLastSuccessState> {
-    let path = xbox_rps_state_path();
-    let text = fs::read_to_string(path).ok()?;
-    serde_json::from_str::<XboxRpsLastSuccessState>(&text).ok()
+fn secure_launch_token_cache_keys(
+    account: Option<&crate::minecraft::LauncherAccount>,
+) -> Vec<String> {
+    let Some(account) = account else {
+        return Vec::new();
+    };
+
+    let mut keys = Vec::new();
+    for value in [account.local_id.as_deref(), account.xuid.as_deref()] {
+        let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+            continue;
+        };
+        let normalized = value.to_ascii_lowercase();
+        if !keys.contains(&normalized) {
+            keys.push(normalized);
+        }
+    }
+
+    keys
 }
 
-fn save_xbox_rps_state(state: &XboxRpsLastSuccessState) -> Result<(), String> {
-    let path = xbox_rps_state_path();
+fn load_secure_launch_token_cache() -> Result<SecureLaunchTokenCacheFile, String> {
+    let path = secure_launch_token_cache_path();
+    if !path.exists() {
+        return Ok(SecureLaunchTokenCacheFile {
+            version: 1,
+            entries: HashMap::new(),
+        });
+    }
+
+    let encrypted = fs::read(&path)
+        .map_err(|error| format!("{} を読み込めませんでした: {error}", path.display()))?;
+    if encrypted.is_empty() {
+        return Ok(SecureLaunchTokenCacheFile {
+            version: 1,
+            entries: HashMap::new(),
+        });
+    }
+
+    let decrypted = decrypt_windows_dpapi_blob(&encrypted)?;
+    serde_json::from_slice::<SecureLaunchTokenCacheFile>(&decrypted).map_err(|error| {
+        format!(
+            "{} の認証キャッシュを解析できませんでした: {error}",
+            path.display()
+        )
+    })
+}
+
+fn save_secure_launch_token_cache(cache: &SecureLaunchTokenCacheFile) -> Result<(), String> {
+    let path = secure_launch_token_cache_path();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("{} を作成できませんでした: {error}", parent.display()))?;
     }
-    let text = serde_json::to_string_pretty(state)
-        .map_err(|error| format!("state を JSON 化できませんでした: {error}"))?;
-    fs::write(&path, text)
+
+    let payload = serde_json::to_vec(cache)
+        .map_err(|error| format!("認証キャッシュを JSON 化できませんでした: {error}"))?;
+    let encrypted = encrypt_windows_dpapi_blob(&payload)?;
+    fs::write(&path, encrypted)
         .map_err(|error| format!("{} を保存できませんでした: {error}", path.display()))
 }
 
-fn is_saved_state_expired(state: &XboxRpsLastSuccessState) -> bool {
-    let Ok(expires_at) = chrono::DateTime::parse_from_rfc3339(&state.expires_at) else {
-        return true;
+pub(super) fn read_secure_launch_token(
+    account: Option<&crate::minecraft::LauncherAccount>,
+) -> Option<SecureLaunchToken> {
+    let keys = secure_launch_token_cache_keys(account);
+    if keys.is_empty() {
+        return None;
+    }
+
+    let cache = match load_secure_launch_token_cache() {
+        Ok(cache) => cache,
+        Err(error) => {
+            app_log::append_log(
+                "WARN",
+                format!("failed to read secure launch token cache: {error}"),
+            );
+            return None;
+        }
     };
-    expires_at.with_timezone(&chrono::Utc) <= chrono::Utc::now()
+
+    for key in keys {
+        let Some(entry) = cache.entries.get(&key) else {
+            continue;
+        };
+        return Some(SecureLaunchToken {
+            access_token: entry.access_token.clone(),
+            expires_at: entry.expires_at.clone(),
+            username: entry.username.clone(),
+            uuid: normalize_uuid_value(&entry.uuid),
+            xuid: entry.xuid.clone().unwrap_or_default(),
+            user_properties: entry
+                .user_properties
+                .clone()
+                .unwrap_or_else(|| "{}".to_string()),
+            user_type: entry.user_type.clone().unwrap_or_else(|| "msa".to_string()),
+        });
+    }
+
+    None
+}
+
+pub(super) fn persist_secure_launch_token(
+    account: Option<&crate::minecraft::LauncherAccount>,
+    token: &SecureLaunchToken,
+) -> Result<(), String> {
+    let keys = secure_launch_token_cache_keys(account);
+    if keys.is_empty() {
+        return Ok(());
+    }
+
+    let mut cache =
+        load_secure_launch_token_cache().unwrap_or_else(|_| SecureLaunchTokenCacheFile {
+            version: 1,
+            entries: HashMap::new(),
+        });
+    cache.version = 1;
+
+    let local_id = account
+        .and_then(|account| account.local_id.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let xuid = account
+        .and_then(|account| account.xuid.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| Some(token.xuid.trim().to_string()).filter(|value| !value.is_empty()));
+    let entry = SecureLaunchTokenCacheEntry {
+        access_token: token.access_token.clone(),
+        expires_at: token.expires_at.clone(),
+        username: token.username.clone(),
+        uuid: normalize_uuid_value(&token.uuid),
+        xuid,
+        local_id,
+        user_properties: Some(token.user_properties.clone()),
+        user_type: Some(token.user_type.clone()),
+        saved_at: chrono::Utc::now().to_rfc3339(),
+    };
+
+    for key in keys {
+        cache.entries.insert(key, entry.clone());
+    }
+
+    save_secure_launch_token_cache(&cache)
+}
+
+pub(super) fn clear_secure_launch_token(account: Option<&crate::minecraft::LauncherAccount>) {
+    let keys = secure_launch_token_cache_keys(account);
+    if keys.is_empty() {
+        return;
+    }
+
+    let mut cache = match load_secure_launch_token_cache() {
+        Ok(cache) => cache,
+        Err(error) => {
+            app_log::append_log(
+                "WARN",
+                format!("failed to clear secure launch token cache: {error}"),
+            );
+            return;
+        }
+    };
+    let mut changed = false;
+    for key in keys {
+        changed |= cache.entries.remove(&key).is_some();
+    }
+    if !changed {
+        return;
+    }
+
+    if let Err(error) = save_secure_launch_token_cache(&cache) {
+        app_log::append_log(
+            "WARN",
+            format!("failed to save secure launch token cache: {error}"),
+        );
+    }
 }
 
 fn rank_rps_variant(token: &CachedXboxToken, label: &str, candidate: &str) -> i32 {
@@ -1769,6 +2106,51 @@ fn decrypt_windows_dpapi_blob(encrypted: &[u8]) -> Result<Vec<u8>, String> {
     }
 }
 
+fn encrypt_windows_dpapi_blob(plain: &[u8]) -> Result<Vec<u8>, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::{ptr, slice};
+        use windows_sys::Win32::{
+            Foundation::LocalFree,
+            Security::Cryptography::{CryptProtectData, CRYPT_INTEGER_BLOB},
+        };
+
+        unsafe {
+            let input = CRYPT_INTEGER_BLOB {
+                cbData: plain.len() as u32,
+                pbData: plain.as_ptr() as *mut u8,
+            };
+            let mut output = CRYPT_INTEGER_BLOB {
+                cbData: 0,
+                pbData: ptr::null_mut(),
+            };
+
+            let success = CryptProtectData(
+                &input,
+                ptr::null(),
+                ptr::null(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                0,
+                &mut output,
+            );
+            if success == 0 {
+                return Err("Windows の保護トークンを暗号化できませんでした。".to_string());
+            }
+
+            let bytes = slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec();
+            let _ = LocalFree(output.pbData as *mut core::ffi::c_void);
+            Ok(bytes)
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = plain;
+        Err("Windows 以外では認証キャッシュ暗号化に対応していません。".to_string())
+    }
+}
+
 async fn exchange_xbox_token_for_minecraft_access_token(
     token: &str,
     context: &str,
@@ -1796,7 +2178,7 @@ async fn exchange_xbox_token_for_minecraft_access_token(
                     ),
                 );
                 if attempt < max_attempts {
-                    std::thread::sleep(Duration::from_millis(retry_wait_millis(attempt)));
+                    tokio::time::sleep(Duration::from_millis(retry_wait_millis(attempt))).await;
                     continue;
                 }
                 return None;
@@ -1839,7 +2221,7 @@ async fn exchange_xbox_token_for_minecraft_access_token(
                     wait_ms, context
                 ),
             );
-            std::thread::sleep(Duration::from_millis(wait_ms));
+            tokio::time::sleep(Duration::from_millis(wait_ms)).await;
             continue;
         }
 
@@ -1956,7 +2338,7 @@ async fn post_json_with_retries(
                     ),
                 );
                 if attempt < max_attempts {
-                    std::thread::sleep(Duration::from_millis(retry_wait_millis(attempt)));
+                    tokio::time::sleep(Duration::from_millis(retry_wait_millis(attempt))).await;
                     continue;
                 }
                 return None;
@@ -1988,7 +2370,7 @@ async fn post_json_with_retries(
         );
 
         if attempt < max_attempts && should_retry_http_status(status) {
-            std::thread::sleep(Duration::from_millis(retry_wait_millis(attempt)));
+            tokio::time::sleep(Duration::from_millis(retry_wait_millis(attempt))).await;
             continue;
         }
 
@@ -2066,6 +2448,30 @@ mod tests {
     }
 
     #[test]
+    fn matches_launcher_account_from_xbox_identity_when_profile_lookup_is_missing() {
+        let accounts = vec![crate::minecraft::LauncherAccount {
+            gamer_tag: Some("PEXkoukunn".to_string()),
+            xuid: Some("2535457379922907".to_string()),
+            local_id: Some("saved-local-id".to_string()),
+            ..Default::default()
+        }];
+        let xbox_identity = XboxProfileIdentity {
+            gamer_tag: Some("PEXkoukunn".to_string()),
+            xuid: Some("2535457379922907".to_string()),
+        };
+
+        let matched = match_local_launcher_account_with_xbox_identity(
+            &accounts,
+            None,
+            None,
+            Some(&xbox_identity),
+        )
+        .expect("expected launcher account to match xbox identity");
+
+        assert_eq!(matched.local_id.as_deref(), Some("saved-local-id"));
+    }
+
+    #[test]
     fn parses_java_launcher_entitlement_payload() {
         let payload = parse_local_launcher_entitlement_payload(Value::String(
             r#"{
@@ -2125,6 +2531,59 @@ mod tests {
         assert_eq!(hint.display_name, None);
         assert_eq!(hint.username.as_deref(), Some("user@example.com"));
         assert_eq!(hint.local_id.as_deref(), Some("abc123"));
+    }
+
+    #[test]
+    fn scores_cached_sources_for_selected_account() {
+        let preferred_account = crate::minecraft::LauncherAccount {
+            username: Some("pexkurann@gmail.com".to_string()),
+            gamer_tag: Some("PEXkoukunn".to_string()),
+            local_id: Some("00037FFE1DB0472E".to_string()),
+            xuid: Some("2535457379922907".to_string()),
+            ..Default::default()
+        };
+        let matching_source = PathBuf::from("C:\\cache\\matching.tbres");
+        let other_source = PathBuf::from("C:\\cache\\other.tbres");
+        let hints = vec![
+            CachedXboxAccountHint {
+                username: Some("pexkurann@gmail.com".to_string()),
+                gamer_tag: Some("PEXkoukunn".to_string()),
+                local_id: Some("00037FFE1DB0472E".to_string()),
+                xuid: Some("2535457379922907".to_string()),
+                display_name: Some("PEXkoukunn".to_string()),
+                source_path: matching_source.clone(),
+            },
+            CachedXboxAccountHint {
+                username: Some("isseidas@gmail.com".to_string()),
+                gamer_tag: Some("PC My".to_string()),
+                local_id: Some("00037FFE1DB0472E79".to_string()),
+                xuid: Some("2535457379922000".to_string()),
+                display_name: Some("PC My".to_string()),
+                source_path: other_source.clone(),
+            },
+        ];
+
+        let scores =
+            preferred_cached_xbox_source_scores_from_hints(Some(&preferred_account), &hints);
+
+        assert!(scores.get(&matching_source).copied().unwrap_or_default() > 0);
+        assert!(!scores.contains_key(&other_source));
+    }
+
+    #[test]
+    fn matches_account_identities_case_insensitively() {
+        assert!(account_identity_matches(
+            Some("PEXKURANN@GMAIL.COM"),
+            Some("pexkurann@gmail.com"),
+        ));
+        assert!(account_identity_matches(
+            Some("C53F907D-0AD2-42C6-99C3-3994A3C1CAA4"),
+            Some("c53f907d0ad242c699c33994a3c1caa4"),
+        ));
+        assert!(!account_identity_matches(
+            Some("isseidas@gmail.com"),
+            Some("pexkurann@gmail.com"),
+        ));
     }
 
     #[test]

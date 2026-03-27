@@ -495,15 +495,13 @@ async fn build_mod_visual_state(
         .or_else(|| parse_curseforge_project_id(&source_project_id))
     {
         let file_metadata = match tracked_entry.curseforge_file_id {
-            Some(file_id) => {
-                fetch_curseforge_file_metadata_for_visual_cache(
-                    client,
-                    curseforge_project_id,
-                    file_id,
-                )
-                .await
-                .ok()
-            }
+            Some(file_id) => fetch_curseforge_file_metadata_for_visual_cache(
+                client,
+                curseforge_project_id,
+                file_id,
+            )
+            .await
+            .ok(),
             None => None,
         };
 

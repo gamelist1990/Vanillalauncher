@@ -464,6 +464,7 @@ pub async fn launch_profile_directly(
 
     let auth_detail = match launch_context.auth_mode.as_str() {
         "direct-account" => "ログイン状態を引き継いで直接起動しています。",
+        "direct-secure-cache" => "暗号化保存した認証情報を検証して直接起動しています。",
         "direct-account-local" => "公式ランチャーの所有権情報を照合して直接起動しています。",
         "direct-xbox-cache-local" => {
             "Xbox キャッシュと公式ランチャーの所有権情報を照合して直接起動しています。"

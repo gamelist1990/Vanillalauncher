@@ -676,6 +676,15 @@ function App() {
             const state = await launcherApi.getProfileModVisualState(currentProfile.id, mod.fileName);
             if (state) {
               visualStates[state.fileName] = state;
+              if (modRemoteFetchTokenRef.current === fetchToken) {
+                setModVisualStateMap((current) => ({
+                  ...current,
+                  [state.fileName]: {
+                    ...(current[state.fileName] ?? {}),
+                    ...state,
+                  },
+                }));
+              }
             }
           } catch {
             // アイコン取得失敗時はグリフ表示のまま進める。
@@ -700,6 +709,15 @@ function App() {
               const state = await launcherApi.getProfileModRemoteState(currentProfile.id, mod.fileName);
               if (state) {
                 remoteStates[state.fileName] = state;
+                if (modRemoteFetchTokenRef.current === fetchToken) {
+                  setModRemoteStateMap((current) => ({
+                    ...current,
+                    [state.fileName]: {
+                      ...(current[state.fileName] ?? {}),
+                      ...state,
+                    },
+                  }));
+                }
               }
             } catch {
               failedCount += 1;
@@ -1702,7 +1720,10 @@ function App() {
     }
   }
 
-  const launchBusy = busyAction === "launch" || selectedProfile?.launchActive === true;
+  const launchBusy =
+    busyAction === "launch" ||
+    (busyAction?.startsWith("account-scan:") ?? false) ||
+    selectedProfile?.launchActive === true;
 
   return (
     <div

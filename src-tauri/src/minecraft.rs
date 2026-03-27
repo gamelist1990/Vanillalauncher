@@ -79,6 +79,15 @@ pub struct LauncherAccount {
     pub xbox_profile_verified: bool,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfileVisualOverride {
+    #[serde(default)]
+    custom_icon_url: Option<String>,
+    #[serde(default)]
+    background_image_url: Option<String>,
+}
+
 pub fn preferred_launcher_account_display_name(account: &LauncherAccount) -> Option<String> {
     if launcher_account_has_verified_profile(account) || account.xbox_profile_verified {
         if let Some(gamer_tag) = account
@@ -219,6 +228,7 @@ struct ParsedLauncherAccountsFile {
 pub fn load_launcher_snapshot() -> Result<LauncherSnapshot, String> {
     let minecraft_root = minecraft_root()?;
     let profiles_json = read_launcher_profiles(&minecraft_root)?;
+    let visual_overrides = read_profile_visual_overrides(&minecraft_root);
     let profiles_value = profiles_json
         .get("profiles")
         .and_then(Value::as_object)
@@ -243,14 +253,25 @@ pub fn load_launcher_snapshot() -> Result<LauncherSnapshot, String> {
             .get("icon")
             .and_then(Value::as_str)
             .map(str::to_string);
+        let override_values = visual_overrides.get(id);
         let custom_icon_url = value
             .get("customIcon")
             .and_then(Value::as_str)
-            .map(str::to_string);
+            .map(str::to_string)
+            .or_else(|| {
+                override_values
+                    .and_then(|entry| entry.custom_icon_url.clone())
+                    .and_then(normalize_optional_visual_url)
+            });
         let background_image_url = value
             .get("backgroundImage")
             .and_then(Value::as_str)
-            .map(str::to_string);
+            .map(str::to_string)
+            .or_else(|| {
+                override_values
+                    .and_then(|entry| entry.background_image_url.clone())
+                    .and_then(normalize_optional_visual_url)
+            });
         let last_used = value
             .get("lastUsed")
             .and_then(Value::as_str)
@@ -1128,7 +1149,10 @@ fn launcher_account_identity_values(account: &LauncherAccount) -> Vec<String> {
     values
 }
 
-pub(crate) fn merge_launcher_account_fields(target: &mut LauncherAccount, source: &LauncherAccount) {
+pub(crate) fn merge_launcher_account_fields(
+    target: &mut LauncherAccount,
+    source: &LauncherAccount,
+) {
     merge_launcher_account_option(&mut target.username, &source.username);
     merge_launcher_account_gamer_tag(target, source);
     merge_launcher_account_option(&mut target.profile_id, &source.profile_id);
@@ -1713,6 +1737,7 @@ pub fn delete_custom_profile(profile_id: &str) -> Result<(), String> {
         removed_profile_name.as_deref(),
         removed_last_version_id.as_deref(),
     )?;
+    let _ = clear_profile_visual_override(&minecraft_root, profile_id);
 
     Ok(())
 }
@@ -1800,7 +1825,22 @@ pub fn update_profile_visuals(
         }
     }
 
-    write_launcher_profiles(&minecraft_root, &profiles_json)
+    let resolved_custom_icon_url = profile
+        .get("customIcon")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let resolved_background_image_url = profile
+        .get("backgroundImage")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+
+    write_launcher_profiles(&minecraft_root, &profiles_json)?;
+    upsert_profile_visual_override(
+        &minecraft_root,
+        profile_id,
+        resolved_custom_icon_url,
+        resolved_background_image_url,
+    )
 }
 
 pub fn update_profile_name(profile_id: &str, profile_name: &str) -> Result<(), String> {
@@ -2081,10 +2121,104 @@ pub fn upsert_custom_profile(draft: CustomProfileDraft) -> Result<String, String
         );
     }
 
+    let saved_custom_icon_url = profile
+        .get("customIcon")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let saved_background_image_url = profile
+        .get("backgroundImage")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+
     profiles_object.insert(profile_id.clone(), Value::Object(profile));
     write_launcher_profiles(&minecraft_root, &profiles_json)?;
+    let _ = upsert_profile_visual_override(
+        &minecraft_root,
+        &profile_id,
+        saved_custom_icon_url,
+        saved_background_image_url,
+    );
     seed_profile_preferences_from_vanilla(&minecraft_root, &draft.game_dir)?;
     Ok(profile_id)
+}
+
+fn profile_visual_overrides_path(minecraft_root: &Path) -> PathBuf {
+    minecraft_root
+        .join(".vanillalauncher")
+        .join("profile-visual-overrides.json")
+}
+
+fn read_profile_visual_overrides(minecraft_root: &Path) -> HashMap<String, ProfileVisualOverride> {
+    let path = profile_visual_overrides_path(minecraft_root);
+    if !path.exists() {
+        return HashMap::new();
+    }
+
+    let Ok(contents) = fs::read_to_string(&path) else {
+        return HashMap::new();
+    };
+
+    serde_json::from_str::<HashMap<String, ProfileVisualOverride>>(&contents)
+        .unwrap_or_else(|_| HashMap::new())
+}
+
+fn write_profile_visual_overrides(
+    minecraft_root: &Path,
+    overrides: &HashMap<String, ProfileVisualOverride>,
+) -> Result<(), String> {
+    let path = profile_visual_overrides_path(minecraft_root);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("{} を準備できませんでした: {error}", parent.display()))?;
+    }
+
+    let serialized = serde_json::to_string_pretty(overrides)
+        .map_err(|error| format!("外観の補助設定を保存形式に変換できませんでした: {error}"))?;
+    fs::write(&path, serialized)
+        .map_err(|error| format!("{} を保存できませんでした: {error}", path.display()))
+}
+
+fn normalize_optional_visual_url(value: String) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn upsert_profile_visual_override(
+    minecraft_root: &Path,
+    profile_id: &str,
+    custom_icon_url: Option<String>,
+    background_image_url: Option<String>,
+) -> Result<(), String> {
+    let normalized_custom_icon_url = custom_icon_url.and_then(normalize_optional_visual_url);
+    let normalized_background_image_url =
+        background_image_url.and_then(normalize_optional_visual_url);
+
+    let mut overrides = read_profile_visual_overrides(minecraft_root);
+    if normalized_custom_icon_url.is_none() && normalized_background_image_url.is_none() {
+        overrides.remove(profile_id);
+    } else {
+        overrides.insert(
+            profile_id.to_string(),
+            ProfileVisualOverride {
+                custom_icon_url: normalized_custom_icon_url,
+                background_image_url: normalized_background_image_url,
+            },
+        );
+    }
+
+    write_profile_visual_overrides(minecraft_root, &overrides)
+}
+
+fn clear_profile_visual_override(minecraft_root: &Path, profile_id: &str) -> Result<(), String> {
+    let mut overrides = read_profile_visual_overrides(minecraft_root);
+    if overrides.remove(profile_id).is_none() {
+        return Ok(());
+    }
+    write_profile_visual_overrides(minecraft_root, &overrides)
 }
 
 fn seed_profile_preferences_from_vanilla(
@@ -2808,7 +2942,9 @@ fn release_version_regex() -> &'static Regex {
 
 #[cfg(test)]
 mod tests {
-    use super::{merge_launcher_account_fields, preferred_launcher_account_display_name, LauncherAccount};
+    use super::{
+        merge_launcher_account_fields, preferred_launcher_account_display_name, LauncherAccount,
+    };
 
     fn launcher_account(
         username: Option<&str>,

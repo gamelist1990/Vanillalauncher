@@ -224,73 +224,143 @@ pub(super) async fn resolve_launch_auth() -> Result<VersionLaunchAuth, String> {
     let active_account_profile = account
         .as_ref()
         .and_then(xbox_auth::launcher_account_profile);
-
-    let direct_account_auth = if raw_access_token != "0"
-        && !xbox_auth::is_access_token_expired(&raw_access_token, expires_at)
-    {
-        app_log::append_log("INFO", "trying launcher_accounts access token");
-        if let Some((profile, matched_account, used_local_hint)) =
-            xbox_auth::resolve_verified_minecraft_profile(
-                &raw_access_token,
-                "launcher_accounts access token",
-                &launcher_accounts,
-                &java_access_hints,
-            )
-            .await
-        {
-            let resolved_account = matched_account.or_else(|| account.clone());
-            if launch_auth_matches_selected_account(
-                account.as_ref(),
-                Some(&profile),
-                resolved_account.as_ref(),
+    let secure_cached_auth = if let Some(active_account) = account.as_ref() {
+        if let Some(cached) = xbox_auth::read_secure_launch_token(Some(active_account)) {
+            if xbox_auth::is_access_token_expired(
+                &cached.access_token,
+                cached.expires_at.as_deref(),
             ) {
-                Some((
-                    raw_access_token.clone(),
-                    profile,
-                    resolved_account,
-                    if used_local_hint {
-                        "direct-account-local".to_string()
-                    } else {
-                        "direct-account".to_string()
-                    },
-                ))
-            } else {
-                app_log::append_log(
-                    "WARN",
-                    "launcher_accounts access token resolved to a different account; ignoring",
-                );
+                app_log::append_log("INFO", "secure launch token cache expired; clearing");
+                xbox_auth::clear_secure_launch_token(Some(active_account));
                 None
-            }
-        } else if let Some(active_account) = account.clone().filter(|entry| {
-            xbox_auth::launcher_account_has_java_access_hint(entry, &java_access_hints)
-        }) {
-            active_account_profile.clone().map(|profile| {
-                app_log::append_log(
-                    "INFO",
-                    format!(
-                        "launcher_accounts access token fell back to local entitlement hint xuid={}",
-                        active_account.xuid.as_deref().unwrap_or("unknown")
-                    ),
-                );
-                (
-                    raw_access_token.clone(),
-                    profile,
-                    Some(active_account),
-                    "direct-account-local".to_string(),
+            } else {
+                app_log::append_log("INFO", "trying secure launch token cache");
+                let verification_context = "secure launch token cache";
+                if let Some(profile) = xbox_auth::fetch_minecraft_profile_for_token(
+                    &cached.access_token,
+                    verification_context,
                 )
-            })
+                .await
+                {
+                    if launch_auth_matches_selected_account(
+                        account.as_ref(),
+                        Some(&profile),
+                        account.as_ref(),
+                    ) {
+                        let resolved_account = account.clone().map(|mut entry| {
+                            if !cached.user_properties.trim().is_empty() {
+                                entry.user_properties = Some(cached.user_properties.clone());
+                            }
+                            if !cached.xuid.trim().is_empty() {
+                                entry.xuid = Some(cached.xuid.clone());
+                            }
+                            entry.profile_id = Some(cached.uuid.clone());
+                            entry.gamer_tag = Some(cached.username.clone());
+                            entry.xbox_profile_verified = true;
+                            entry
+                        });
+                        Some((
+                            cached.access_token.clone(),
+                            profile,
+                            resolved_account,
+                            "direct-secure-cache".to_string(),
+                        ))
+                    } else {
+                        app_log::append_log(
+                            "WARN",
+                            "secure launch token cache resolved to a different account; clearing",
+                        );
+                        xbox_auth::clear_secure_launch_token(Some(active_account));
+                        None
+                    }
+                } else {
+                    app_log::append_log(
+                        "WARN",
+                        "secure launch token cache failed verification; clearing",
+                    );
+                    xbox_auth::clear_secure_launch_token(Some(active_account));
+                    None
+                }
+            }
         } else {
             None
         }
     } else {
-        app_log::append_log(
-            "INFO",
-            "launcher_accounts access token missing or expired; trying Xbox cache",
-        );
         None
     };
 
-    let cached_xbox_tokens = if direct_account_auth.is_none() {
+    let direct_account_auth = if secure_cached_auth.is_none() {
+        if raw_access_token != "0"
+            && !xbox_auth::is_access_token_expired(&raw_access_token, expires_at)
+        {
+            app_log::append_log("INFO", "trying launcher_accounts access token");
+            if let Some((profile, matched_account, used_local_hint)) =
+                xbox_auth::resolve_verified_minecraft_profile(
+                    &raw_access_token,
+                    "launcher_accounts access token",
+                    &launcher_accounts,
+                    &java_access_hints,
+                )
+                .await
+            {
+                let resolved_account = matched_account.or_else(|| account.clone());
+                if launch_auth_matches_selected_account(
+                    account.as_ref(),
+                    Some(&profile),
+                    resolved_account.as_ref(),
+                ) {
+                    Some((
+                        raw_access_token.clone(),
+                        profile,
+                        resolved_account,
+                        if used_local_hint {
+                            "direct-account-local".to_string()
+                        } else {
+                            "direct-account".to_string()
+                        },
+                    ))
+                } else {
+                    app_log::append_log(
+                        "WARN",
+                        "launcher_accounts access token resolved to a different account; ignoring",
+                    );
+                    None
+                }
+            } else {
+                if let Some(active_account) = account.clone().filter(|entry| {
+                    xbox_auth::launcher_account_has_java_access_hint(entry, &java_access_hints)
+                }) {
+                    active_account_profile.clone().map(|profile| {
+                        app_log::append_log(
+                            "INFO",
+                            format!(
+                                "launcher_accounts access token fell back to local entitlement hint xuid={}",
+                                active_account.xuid.as_deref().unwrap_or("unknown")
+                            ),
+                        );
+                        (
+                            raw_access_token.clone(),
+                            profile,
+                            Some(active_account),
+                            "direct-account-local".to_string(),
+                        )
+                    })
+                } else {
+                    None
+                }
+            }
+        } else {
+            app_log::append_log(
+                "INFO",
+                "launcher_accounts access token missing or expired; trying Xbox cache",
+            );
+            None
+        }
+    } else {
+        None
+    };
+
+    let cached_xbox_tokens = if secure_cached_auth.is_none() && direct_account_auth.is_none() {
         match xbox_auth::read_cached_xbox_identity_tokens() {
             Ok(tokens) => {
                 if tokens.is_empty() {
@@ -323,14 +393,16 @@ pub(super) async fn resolve_launch_auth() -> Result<VersionLaunchAuth, String> {
             String,
         )> = None;
         let mut attempted_tokens = HashSet::new();
-        let (planned_attempts, used_saved_state) =
-            xbox_auth::build_prioritized_rps_attempts(&cached_xbox_tokens, 10);
+        let planned_attempts = xbox_auth::build_prioritized_rps_attempts_for_account(
+            &cached_xbox_tokens,
+            10,
+            account.as_ref(),
+        );
         app_log::append_log(
             "INFO",
             format!(
-                "prepared {} prioritized xbox-rps attempts (saved-state-priority={})",
-                planned_attempts.len(),
-                used_saved_state
+                "prepared {} prioritized xbox-rps attempts",
+                planned_attempts.len()
             ),
         );
 
@@ -349,19 +421,21 @@ pub(super) async fn resolve_launch_auth() -> Result<VersionLaunchAuth, String> {
                 ),
             );
             let context = format!("{} [{}]", xbox_token.source_path.display(), variant_label);
-            let exchange_result = xbox_auth::exchange_rps_ticket_for_minecraft_access_token(
-                &candidate_token,
-                &context,
-            )
-            .await;
-            if let Some(access_token) = exchange_result {
+            let exchange_result =
+                xbox_auth::exchange_rps_ticket_for_minecraft_auth(&candidate_token, &context).await;
+            if let Some(exchange) = exchange_result {
+                let Some(access_token) = exchange.minecraft_access_token else {
+                    tokio::time::sleep(Duration::from_millis(180)).await;
+                    continue;
+                };
                 let verification_context = format!("{context} -> minecraft/profile");
                 if let Some((profile, matched_account, used_local_hint)) =
-                    xbox_auth::resolve_verified_minecraft_profile(
+                    xbox_auth::resolve_verified_minecraft_profile_with_xbox_identity(
                         &access_token,
                         &verification_context,
                         &launcher_accounts,
                         &java_access_hints,
+                        exchange.xbox_identity.as_ref(),
                     )
                     .await
                 {
@@ -378,15 +452,10 @@ pub(super) async fn resolve_launch_auth() -> Result<VersionLaunchAuth, String> {
                                 variant_label
                             ),
                         );
-                        std::thread::sleep(Duration::from_millis(180));
+                        tokio::time::sleep(Duration::from_millis(180)).await;
                         continue;
                     }
                     app_log::append_log("INFO", "Xbox token exchanged via /launcher/login");
-                    xbox_auth::persist_xbox_rps_success_state(
-                        &xbox_token,
-                        &variant_label,
-                        &candidate_token,
-                    );
                     resolved_auth = Some((
                         access_token,
                         profile,
@@ -410,7 +479,7 @@ pub(super) async fn resolve_launch_auth() -> Result<VersionLaunchAuth, String> {
                 );
             }
 
-            std::thread::sleep(Duration::from_millis(180));
+            tokio::time::sleep(Duration::from_millis(180)).await;
         }
         if resolved_auth.is_none() {
             app_log::append_log("WARN", "all cached Xbox token exchanges failed");
@@ -421,7 +490,9 @@ pub(super) async fn resolve_launch_auth() -> Result<VersionLaunchAuth, String> {
     };
 
     let (access_token, verified_profile, resolved_account, mode) =
-        if let Some((token, profile, matched_account, mode)) = direct_account_auth {
+        if let Some((token, profile, matched_account, mode)) = secure_cached_auth {
+            (token, Some(profile), matched_account, mode)
+        } else if let Some((token, profile, matched_account, mode)) = direct_account_auth {
             (token, Some(profile), matched_account, mode)
         } else if let Some((token, profile, matched_account, mode)) = xbox_profile {
             (token, Some(profile), matched_account, mode)
@@ -481,6 +552,29 @@ pub(super) async fn resolve_launch_auth() -> Result<VersionLaunchAuth, String> {
     let user_properties = metadata_account
         .and_then(|account| account.user_properties.clone())
         .unwrap_or_else(|| "{}".to_string());
+    if matches!(
+        mode.as_str(),
+        "direct-account" | "direct-xbox-cache" | "direct-secure-cache"
+    ) {
+        let secure_token = xbox_auth::SecureLaunchToken {
+            access_token: access_token.clone(),
+            expires_at: xbox_auth::access_token_expiry_rfc3339(&access_token),
+            username: username.clone(),
+            uuid: uuid.clone(),
+            xuid: xuid.clone(),
+            user_properties: user_properties.clone(),
+            user_type: "msa".to_string(),
+        };
+        if let Err(error) = xbox_auth::persist_secure_launch_token(
+            metadata_account.or(account.as_ref()),
+            &secure_token,
+        ) {
+            app_log::append_log(
+                "WARN",
+                format!("failed to persist secure launch token cache: {error}"),
+            );
+        }
+    }
 
     if mode == "direct-offline-selected" {
         let offline_username = offline_username_for_account(metadata_account.or(account.as_ref()));

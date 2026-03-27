@@ -7,6 +7,7 @@ type LauncherAccountModalProps = {
   switchingLocalId?: string | null;
   scanning?: boolean;
   scanProgress?: ProgressState | null;
+  interactionDisabled?: boolean;
   onClose: () => void;
   onSelectAccount: (localId: string) => void;
   onScanAccounts: () => void;
@@ -19,6 +20,7 @@ export function LauncherAccountModal({
   switchingLocalId,
   scanning = false,
   scanProgress = null,
+  interactionDisabled = false,
   onClose,
   onSelectAccount,
   onScanAccounts,
@@ -174,7 +176,7 @@ export function LauncherAccountModal({
                   type="button"
                   className={`launcher-account-row is-selectable ${selected ? "is-active" : ""} ${fromPcScan ? "is-detected-only" : ""} ${account.hasJavaAccess ? "is-java-owned" : "is-java-missing"}`}
                   onClick={() => onSelectAccount(account.localId)}
-                  disabled={scanning || switching || selected}
+                  disabled={scanning || interactionDisabled || switching || selected}
                 >
                   {rowContent}
                 </button>
@@ -189,13 +191,23 @@ export function LauncherAccountModal({
         </div>
 
         <div className="modal-actions">
-          <button type="button" className="secondary-button" onClick={onScanAccounts} disabled={scanning}>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={onScanAccounts}
+            disabled={scanning || interactionDisabled}
+          >
             {scanning ? "検出中..." : "PC から再検出"}
           </button>
           <button type="button" className="secondary-button" onClick={onClose}>
             閉じる
           </button>
-          <button type="button" className="secondary-button" onClick={onOpenOfficialLauncher}>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={onOpenOfficialLauncher}
+            disabled={interactionDisabled}
+          >
             公式 Launcher を開く
           </button>
         </div>
