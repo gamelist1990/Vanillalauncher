@@ -1,10 +1,18 @@
-# Tauri + React + Typescript
+# Vanillalauncher
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+Tauri + React + TypeScript を組み合わせた Minecraft ランチャーの開発リポジトリ（Vite + Rust + Tauri）。
 
-## Recommended IDE Setup
+## 概要
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+- フロントエンド: React + TypeScript + Vite
+- デスクトップ: Tauri (Rust)
+- 開発フローに Bun を推奨
 
+## ダウンロード
 
-- Buildはbun を使って
+- リポジトリ (ソース): https://github.com/gamelist1990/Vanillalauncher
+- リリース一覧（ダウンロード）: https://github.com/gamelist1990/Vanillalauncher/releases
+- 毎コミットの prerelease (タグ: pre-release): https://github.com/gamelist1990/Vanillalauncher/releases/tag/pre-release
+- 安定版リリース (タグ: release): https://github.com/gamelist1990/Vanillalauncher/releases/tag/release
+
+---
