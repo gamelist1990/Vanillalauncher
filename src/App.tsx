@@ -165,10 +165,21 @@ function App() {
       event.preventDefault();
     };
 
+    if (import.meta.env.DEV) {
+      console.debug("[App] development mode: context menu allowed");
+      document.removeEventListener("contextmenu", handleContextMenu);
+      document.oncontextmenu = null;
+      return () => {
+        document.oncontextmenu = null;
+      };
+    }
+
+    console.debug("[App] production mode: context menu disabled");
     document.addEventListener("contextmenu", handleContextMenu);
 
     return () => {
       document.removeEventListener("contextmenu", handleContextMenu);
+      document.oncontextmenu = null;
     };
   }, []);
 
@@ -179,6 +190,8 @@ function App() {
   const [modVisualStateMap, setModVisualStateMap] = useState<Record<string, ModRemoteState>>({});
   const [modRemoteStateMap, setModRemoteStateMap] = useState<Record<string, ModRemoteState>>({});
   const [loadingModRemoteStates, setLoadingModRemoteStates] = useState(false);
+  const [modRemoteFetchTotal, setModRemoteFetchTotal] = useState<number>(0);
+  const [modRemoteFetchDone, setModRemoteFetchDone] = useState<number>(0);
   const [modUpdateLastCheckedAt, setModUpdateLastCheckedAt] = useState<number | null>(null);
   const [modRemoteStateCacheMap, setModRemoteStateCacheMap] =
     useState<Record<string, ModRemoteStateCacheEntry>>({});
@@ -665,6 +678,9 @@ function App() {
 
     const fetchToken = modRemoteFetchTokenRef.current + 1;
     modRemoteFetchTokenRef.current = fetchToken;
+    setModRemoteFetchTotal(trackedMods.length);
+    setModRemoteFetchDone(0);
+    console.debug(`[mods] check updates start profile=${currentProfile.id} tracked=${trackedMods.length} token=${fetchToken}`);
     setBusyAction("check-mod-updates");
     setLoadingModRemoteStates(true);
 
@@ -721,6 +737,14 @@ function App() {
               }
             } catch {
               failedCount += 1;
+            } finally {
+              if (modRemoteFetchTokenRef.current === fetchToken) {
+                setModRemoteFetchDone((cur) => {
+                  const next = cur + 1;
+                  console.debug(`[mods] fetched remote progress ${next}/${trackedMods.length}`);
+                  return next;
+                });
+              }
             }
           }
         }),
@@ -752,6 +776,7 @@ function App() {
       }
     } finally {
       if (modRemoteFetchTokenRef.current === fetchToken) {
+        setModRemoteFetchDone(trackedMods.length);
         setLoadingModRemoteStates(false);
         setBusyAction((current) => (current === "check-mod-updates" ? null : current));
       }
@@ -1851,6 +1876,8 @@ function App() {
           searchResults={searchResults}
           modRemoteStateMap={mergedModStateMap}
           loadingModRemoteStates={loadingModRemoteStates}
+          modRemoteFetchDone={modRemoteFetchDone}
+          modRemoteFetchTotal={modRemoteFetchTotal}
           modUpdateLastCheckedAt={modUpdateLastCheckedAt}
           activeLoader={activeLoader}
           loaderCatalog={loaderCatalog}

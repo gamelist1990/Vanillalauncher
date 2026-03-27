@@ -18,28 +18,59 @@ function estimateRemainingMs(progress: ProgressSnapshot, referenceTime: number) 
     return 0;
   }
 
-  if (progress.percent < 8) {
-    return null;
-  }
+  // Require a small amount of progress/time before estimating to avoid noise.
+  const MIN_ELAPSED_MS = 2000;
+  const MIN_PERCENT = 1;
 
   const elapsed = referenceTime - progress.startedAt;
-  if (elapsed < 4000) {
+  if (progress.percent < MIN_PERCENT || elapsed < MIN_ELAPSED_MS) {
     return null;
   }
 
-  const completionRatio = progress.percent / 100;
-  if (completionRatio <= 0 || completionRatio >= 1) {
+  // Build ordered samples (oldest -> newest) and include the current reference point.
+  const samples: { t: number; p: number }[] = progress.history.map((h) => ({ t: h.timestamp, p: h.percent }));
+  // Ensure we have a starting sample; fall back to startedAt if history is empty.
+  if (samples.length === 0) {
+    samples.push({ t: progress.startedAt, p: 0 });
+  }
+
+  // Append the latest observed point (referenceTime, current percent).
+  const last = samples[samples.length - 1];
+  if (referenceTime !== last.t || progress.percent !== last.p) {
+    samples.push({ t: referenceTime, p: progress.percent });
+  }
+
+  // Calculate instantaneous speeds (percent per ms) between consecutive samples.
+  const speeds: number[] = [];
+  for (let i = 1; i < samples.length; i++) {
+    const dt = samples[i].t - samples[i - 1].t;
+    const dp = samples[i].p - samples[i - 1].p;
+    if (dt > 0 && dp > 0) {
+      speeds.push(dp / dt);
+    }
+  }
+
+  if (speeds.length === 0) {
     return null;
   }
 
-  const estimatedTotal = elapsed / completionRatio;
-  const estimatedRemaining = estimatedTotal - elapsed;
+  // Use the median speed to reduce sensitivity to spikes/outliers.
+  speeds.sort((a, b) => a - b);
+  const mid = Math.floor(speeds.length / 2);
+  const medianSpeed = speeds.length % 2 === 1 ? speeds[mid] : (speeds[mid - 1] + speeds[mid]) / 2;
 
-  if (!Number.isFinite(estimatedRemaining) || estimatedRemaining < 0) {
+  if (!Number.isFinite(medianSpeed) || medianSpeed <= 0) {
     return null;
   }
 
-  return estimatedRemaining;
+  const remainingPercent = Math.max(0, 100 - progress.percent);
+  const estimatedRemainingMs = remainingPercent / medianSpeed;
+
+  if (!Number.isFinite(estimatedRemainingMs) || estimatedRemainingMs < 0) {
+    return null;
+  }
+
+  return estimatedRemainingMs;
 }
 
 export function ProgressDetailModal({

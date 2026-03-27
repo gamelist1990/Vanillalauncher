@@ -8,6 +8,8 @@ type ModsViewProps = {
   busyAction: string | null;
   remoteStates: Record<string, ModRemoteState>;
   loadingRemoteStates: boolean;
+  remoteFetchDone: number;
+  remoteFetchTotal: number;
   lastCheckedAt: number | null;
   onToggle: (mod: InstalledMod) => void;
   onUpdate: (mod: InstalledMod) => void;
@@ -24,6 +26,8 @@ export function ModsView({
   busyAction,
   remoteStates,
   loadingRemoteStates,
+  remoteFetchDone,
+  remoteFetchTotal,
   lastCheckedAt,
   onToggle,
   onUpdate,
@@ -139,7 +143,13 @@ export function ModsView({
 
           <div className="mods-remote-status">
             <span>更新ステータス</span>
-            <strong>{loadingRemoteStates ? "チェックしています" : `${updatableCount} 件更新可能`}</strong>
+            <strong>
+              {loadingRemoteStates
+                ? remoteFetchTotal > 0
+                  ? `${remoteFetchDone} / ${remoteFetchTotal} 取得中`
+                  : "チェックしています"
+                : `${updatableCount} 件更新可能`}
+            </strong>
             <small>最終確認: {checkedAtLabel}</small>
             <button
               className="secondary-button"

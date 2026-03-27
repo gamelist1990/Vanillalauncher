@@ -11,13 +11,13 @@
   },
   "app": {
     "windows": [
-      {
+        {
         "title": "Vanilla Launcher",
         "width": 1290,
         "height": 720,
         "minWidth": 1200,
         "minHeight": 760,
-        "devtools": false
+        "devtools": true
       }
     ],
     "security": {

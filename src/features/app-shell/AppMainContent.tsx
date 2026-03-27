@@ -31,6 +31,8 @@ type AppMainContentProps = {
   searchResults: ModrinthProject[];
   modRemoteStateMap: Record<string, ModRemoteState>;
   loadingModRemoteStates: boolean;
+  modRemoteFetchDone: number;
+  modRemoteFetchTotal: number;
   modUpdateLastCheckedAt: number | null;
   activeLoader: LoaderId;
   loaderCatalog: LoaderCatalog | null;
@@ -89,6 +91,8 @@ export function AppMainContent({
   searchResults,
   modRemoteStateMap,
   loadingModRemoteStates,
+  modRemoteFetchDone,
+  modRemoteFetchTotal,
   modUpdateLastCheckedAt,
   activeLoader,
   loaderCatalog,
@@ -156,6 +160,8 @@ export function AppMainContent({
           busyAction={busyAction}
           remoteStates={modRemoteStateMap}
           loadingRemoteStates={loadingModRemoteStates}
+          remoteFetchDone={modRemoteFetchDone}
+          remoteFetchTotal={modRemoteFetchTotal}
           lastCheckedAt={modUpdateLastCheckedAt}
           onToggle={onToggleMod}
           onUpdate={onUpdateMod}
