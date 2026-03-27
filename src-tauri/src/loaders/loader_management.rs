@@ -167,7 +167,13 @@ pub async fn install_fabric_loader(
         ),
         8.0,
     );
-    let _ = ensure_managed_java_runtime(Some((app, operation_id.as_str())))?;
+    let app_clone = app.clone();
+    let op_id = operation_id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_managed_java_runtime(Some((&app_clone, op_id.as_str())))
+    })
+    .await
+    .map_err(|error| format!("Java ランタイム準備に失敗しました: {error}"))??;
     let (version_id, resolved_loader_version) =
         ensure_fabric_version_installed(requested_game_version, loader_version.as_deref()).await?;
     let result = finalize_loader_install(
@@ -533,7 +539,13 @@ async fn install_quilt_loader(
         ),
         8.0,
     );
-    let _ = ensure_managed_java_runtime(Some((app, operation_id.as_str())))?;
+    let app_clone = app.clone();
+    let op_id = operation_id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_managed_java_runtime(Some((&app_clone, op_id.as_str())))
+    })
+    .await
+    .map_err(|error| format!("Java ランタイム準備に失敗しました: {error}"))??;
     let (version_id, resolved_loader_version) =
         ensure_quilt_version_installed(requested_game_version, loader_version.as_deref()).await?;
 
@@ -582,7 +594,13 @@ async fn install_forge_loader(
         ),
         8.0,
     );
-    let _ = ensure_managed_java_runtime(Some((app, operation_id.as_str())))?;
+    let app_clone = app.clone();
+    let op_id = operation_id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_managed_java_runtime(Some((&app_clone, op_id.as_str())))
+    })
+    .await
+    .map_err(|error| format!("Java ランタイム準備に失敗しました: {error}"))??;
     let (version_id, resolved_loader_version) =
         ensure_forge_version_installed(requested_game_version, loader_version.as_deref()).await?;
 
@@ -635,7 +653,13 @@ async fn install_neoforge_loader(
         ),
         8.0,
     );
-    let _ = ensure_managed_java_runtime(Some((app, operation_id.as_str())))?;
+    let app_clone = app.clone();
+    let op_id = operation_id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_managed_java_runtime(Some((&app_clone, op_id.as_str())))
+    })
+    .await
+    .map_err(|error| format!("Java ランタイム準備に失敗しました: {error}"))??;
     let (version_id, resolved_loader_version) =
         ensure_neoforge_version_installed(requested_game_version, loader_version.as_deref())
             .await?;
