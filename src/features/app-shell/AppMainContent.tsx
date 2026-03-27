@@ -31,6 +31,7 @@ type AppMainContentProps = {
   searchResults: ModrinthProject[];
   modRemoteStateMap: Record<string, ModRemoteState>;
   loadingModRemoteStates: boolean;
+  modUpdateLastCheckedAt: number | null;
   activeLoader: LoaderId;
   loaderCatalog: LoaderCatalog | null;
   loadingLoaderCatalog: boolean;
@@ -49,6 +50,7 @@ type AppMainContentProps = {
   onToggleMod: (mod: InstalledMod) => void;
   onUpdateMod: (mod: InstalledMod) => void;
   onUpdateAllMods: () => void;
+  onCheckModUpdates: () => void;
   onRemoveMod: (mod: InstalledMod) => void;
   onOpenModSource: (mod: InstalledMod, remoteState?: ModRemoteState) => void;
   onOpenGameDir: () => void;
@@ -87,6 +89,7 @@ export function AppMainContent({
   searchResults,
   modRemoteStateMap,
   loadingModRemoteStates,
+  modUpdateLastCheckedAt,
   activeLoader,
   loaderCatalog,
   loadingLoaderCatalog,
@@ -105,6 +108,7 @@ export function AppMainContent({
   onToggleMod,
   onUpdateMod,
   onUpdateAllMods,
+  onCheckModUpdates,
   onRemoveMod,
   onOpenModSource,
   onOpenGameDir,
@@ -152,9 +156,11 @@ export function AppMainContent({
           busyAction={busyAction}
           remoteStates={modRemoteStateMap}
           loadingRemoteStates={loadingModRemoteStates}
+          lastCheckedAt={modUpdateLastCheckedAt}
           onToggle={onToggleMod}
           onUpdate={onUpdateMod}
           onUpdateAll={onUpdateAllMods}
+          onCheckUpdates={onCheckModUpdates}
           onRemove={onRemoveMod}
           onOpenModSource={onOpenModSource}
           onOpenGameDir={onOpenGameDir}

@@ -1,4 +1,4 @@
-import { startTransition, useCallback, useEffect, useState } from "react";
+import { startTransition, useCallback, useEffect, useRef, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
@@ -53,6 +53,15 @@ import "./styles/modals.css";
 import "./styles/play-profile.css";
 import "./styles/scrollbars.css";
 
+type ModRemoteStateCacheEntry = {
+  modSignature: string;
+  visualStates: Record<string, ModRemoteState>;
+  remoteStates: Record<string, ModRemoteState>;
+  checkedAt: number;
+};
+
+const MOD_UPDATE_CACHE_WINDOW_MS = 5 * 60 * 1000;
+
 function App() {
   const [snapshot, setSnapshot] = useState<LauncherSnapshot | null>(null);
   const [selectedProfileId, setSelectedProfileId] = useState("");
@@ -86,6 +95,10 @@ function App() {
   const [modVisualStateMap, setModVisualStateMap] = useState<Record<string, ModRemoteState>>({});
   const [modRemoteStateMap, setModRemoteStateMap] = useState<Record<string, ModRemoteState>>({});
   const [loadingModRemoteStates, setLoadingModRemoteStates] = useState(false);
+  const [modUpdateLastCheckedAt, setModUpdateLastCheckedAt] = useState<number | null>(null);
+  const [modRemoteStateCacheMap, setModRemoteStateCacheMap] =
+    useState<Record<string, ModRemoteStateCacheEntry>>({});
+  const modRemoteFetchTokenRef = useRef(0);
 
   const [activeLoader, setActiveLoader] = useState<LoaderId>("fabric");
   const [loaderCatalog, setLoaderCatalog] = useState<LoaderCatalog | null>(null);
@@ -371,6 +384,31 @@ function App() {
       setLoadingModRemoteStates(false);
       setModVisualStateMap({});
       setModRemoteStateMap({});
+      setModUpdateLastCheckedAt(null);
+      return;
+    }
+
+    const cached = modRemoteStateCacheMap[selectedProfile.id];
+    if (cached && cached.modSignature === selectedProfileModSignature) {
+      setModVisualStateMap(cached.visualStates);
+      setModRemoteStateMap(cached.remoteStates);
+      setModUpdateLastCheckedAt(cached.checkedAt);
+    } else {
+      setModVisualStateMap({});
+      setModRemoteStateMap({});
+      setModUpdateLastCheckedAt(null);
+    }
+
+    setLoadingModRemoteStates(false);
+  }, [
+    activeView,
+    selectedProfile?.id,
+    selectedProfileModSignature,
+    modRemoteStateCacheMap,
+  ]);
+
+  async function handleCheckModUpdates() {
+    if (!selectedProfile) {
       return;
     }
 
@@ -378,86 +416,115 @@ function App() {
     const trackedMods = currentProfile.mods.filter(
       (mod) => (mod.sourceProjectId ?? "").trim() !== "",
     );
-    let cancelled = false;
+    const cacheKey = currentProfile.id;
+    const cached = modRemoteStateCacheMap[cacheKey];
+    const now = Date.now();
 
-    async function refreshModRemoteStates() {
+    if (
+      cached &&
+      cached.modSignature === selectedProfileModSignature &&
+      now - cached.checkedAt < MOD_UPDATE_CACHE_WINDOW_MS
+    ) {
+      setModVisualStateMap(cached.visualStates);
+      setModRemoteStateMap(cached.remoteStates);
+      setModUpdateLastCheckedAt(cached.checkedAt);
+      pushNotice("info", "直近の更新チェック結果を表示しています。必要なら数分後に再確認してください。");
+      return;
+    }
+
+    if (trackedMods.length === 0) {
       setModVisualStateMap({});
       setModRemoteStateMap({});
+      setModUpdateLastCheckedAt(now);
+      setModRemoteStateCacheMap((current) => ({
+        ...current,
+        [cacheKey]: {
+          modSignature: selectedProfileModSignature,
+          visualStates: {},
+          remoteStates: {},
+          checkedAt: now,
+        },
+      }));
+      pushNotice("info", "更新チェック対象の Mod はありません。" );
+      return;
+    }
 
-      if (trackedMods.length === 0) {
-        setLoadingModRemoteStates(false);
-        return;
-      }
+    const fetchToken = modRemoteFetchTokenRef.current + 1;
+    modRemoteFetchTokenRef.current = fetchToken;
+    setBusyAction("check-mod-updates");
+    setLoadingModRemoteStates(true);
 
-      setLoadingModRemoteStates(true);
-      let settledCount = 0;
+    try {
+      const visualStates: Record<string, ModRemoteState> = {};
+      await Promise.all(
+        trackedMods.map(async (mod) => {
+          try {
+            const state = await launcherApi.getProfileModVisualState(currentProfile.id, mod.fileName);
+            if (state) {
+              visualStates[state.fileName] = state;
+            }
+          } catch {
+            // アイコン取得失敗時はグリフ表示のまま進める。
+          }
+        }),
+      );
+
+      const remoteStates: Record<string, ModRemoteState> = {};
       let failedCount = 0;
       const updateQueue = [...trackedMods];
+      const workerCount = Math.min(4, trackedMods.length);
 
-      for (const mod of trackedMods) {
-        void launcherApi
-          .getProfileModVisualState(currentProfile.id, mod.fileName)
-          .then((state) => {
-            if (cancelled || !state) {
+      await Promise.allSettled(
+        Array.from({ length: workerCount }, async () => {
+          while (true) {
+            const mod = updateQueue.shift();
+            if (!mod) {
               return;
             }
 
-            setModVisualStateMap((current) => ({
-              ...current,
-              [state.fileName]: state,
-            }));
-          })
-          .catch(() => {
-            // アイコン取得失敗時はグリフ表示のまま進める。
-          });
+            try {
+              const state = await launcherApi.getProfileModRemoteState(currentProfile.id, mod.fileName);
+              if (state) {
+                remoteStates[state.fileName] = state;
+              }
+            } catch {
+              failedCount += 1;
+            }
+          }
+        }),
+      );
+
+      if (modRemoteFetchTokenRef.current !== fetchToken) {
+        return;
       }
 
-      const workerCount = Math.min(4, trackedMods.length);
-      const workers = Array.from({ length: workerCount }, async () => {
-        while (!cancelled) {
-          const mod = updateQueue.shift();
-          if (!mod) {
-            return;
-          }
+      const checkedAt = Date.now();
+      setModVisualStateMap(visualStates);
+      setModRemoteStateMap(remoteStates);
+      setModUpdateLastCheckedAt(checkedAt);
+      setModRemoteStateCacheMap((current) => ({
+        ...current,
+        [cacheKey]: {
+          modSignature: selectedProfileModSignature,
+          visualStates,
+          remoteStates,
+          checkedAt,
+        },
+      }));
 
-          try {
-            const state = await launcherApi.getProfileModRemoteState(
-              currentProfile.id,
-              mod.fileName,
-            );
-            if (cancelled || !state) {
-              continue;
-            }
-
-            setModRemoteStateMap((current) => ({
-              ...current,
-              [state.fileName]: state,
-            }));
-          } catch {
-            failedCount += 1;
-          } finally {
-            settledCount += 1;
-            if (cancelled || settledCount < trackedMods.length) {
-              continue;
-            }
-
-            setLoadingModRemoteStates(false);
-            if (failedCount === trackedMods.length) {
-              pushNotice("error", "Mod の更新情報を取得できませんでした。");
-            }
-          }
-        }
-      });
-
-      void Promise.allSettled(workers);
+      if (failedCount === trackedMods.length) {
+        pushNotice("error", "Mod の更新情報を取得できませんでした。");
+      } else {
+        const updatableCount = Object.values(remoteStates).filter((state) => state.updateAvailable).length;
+        pushNotice("info", `更新チェックが完了しました。${updatableCount} 件が更新可能です。`);
+      }
+    } finally {
+      if (modRemoteFetchTokenRef.current === fetchToken) {
+        setLoadingModRemoteStates(false);
+        setBusyAction((current) => (current === "check-mod-updates" ? null : current));
+      }
     }
-
-    void refreshModRemoteStates();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [activeView, selectedProfile?.id, selectedProfileModSignature]);
+  }
 
   async function refreshLauncher(preferredProfileId?: string) {
     try {
@@ -1427,6 +1494,7 @@ function App() {
           searchResults={searchResults}
           modRemoteStateMap={mergedModStateMap}
           loadingModRemoteStates={loadingModRemoteStates}
+          modUpdateLastCheckedAt={modUpdateLastCheckedAt}
           activeLoader={activeLoader}
           loaderCatalog={loaderCatalog}
           loadingLoaderCatalog={loadingLoaderCatalog}
@@ -1448,6 +1516,7 @@ function App() {
           onToggleMod={(mod) => void handleToggle(mod)}
           onUpdateMod={(mod) => void handleUpdate(mod)}
           onUpdateAllMods={() => void handleUpdateAllMods()}
+          onCheckModUpdates={() => void handleCheckModUpdates()}
           onRemoveMod={(mod) => void handleRemove(mod)}
           onOpenModSource={(mod, remoteState) => void handleOpenModSource(mod, remoteState)}
           onOpenGameDir={() => void openSelectedPath("game")}

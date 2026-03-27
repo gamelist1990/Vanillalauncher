@@ -8,9 +8,11 @@ type ModsViewProps = {
   busyAction: string | null;
   remoteStates: Record<string, ModRemoteState>;
   loadingRemoteStates: boolean;
+  lastCheckedAt: number | null;
   onToggle: (mod: InstalledMod) => void;
   onUpdate: (mod: InstalledMod) => void;
   onUpdateAll: () => void;
+  onCheckUpdates: () => void;
   onRemove: (mod: InstalledMod) => void;
   onOpenModSource: (mod: InstalledMod, remoteState?: ModRemoteState) => void;
   onOpenGameDir: () => void;
@@ -22,9 +24,11 @@ export function ModsView({
   busyAction,
   remoteStates,
   loadingRemoteStates,
+  lastCheckedAt,
   onToggle,
   onUpdate,
   onUpdateAll,
+  onCheckUpdates,
   onRemove,
   onOpenModSource,
   onOpenGameDir,
@@ -33,13 +37,22 @@ export function ModsView({
   const [filter, setFilter] = useState<"all" | "enabled" | "disabled">("all");
   const [query, setQuery] = useState("");
   const updatableCount = Object.values(remoteStates).filter((state) => state.updateAvailable).length;
-  const trackedCount = Object.values(remoteStates).length;
+  const trackedCount =
+    profile?.mods.filter((mod) => (mod.sourceProjectId ?? "").trim() !== "").length ?? 0;
   const duplicateGroups = getDuplicateModGroups(profile?.mods ?? []);
   const duplicateCount = duplicateGroups.reduce((count, group) => count + group.length, 0);
   const updatingAll = busyAction === "update-all-mods";
+  const checkingUpdates = busyAction === "check-mod-updates";
   const totalMods = profile?.mods.length ?? 0;
   const enabledMods = profile?.mods.filter((mod) => mod.enabled).length ?? 0;
   const disabledMods = profile?.mods.filter((mod) => !mod.enabled).length ?? 0;
+  const checkedAtLabel = lastCheckedAt
+    ? new Date(lastCheckedAt).toLocaleString("ja-JP", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      })
+    : "未確認";
 
   const filteredMods = (profile?.mods ?? []).filter((mod) => {
     if (filter === "enabled" && !mod.enabled) {
@@ -127,10 +140,18 @@ export function ModsView({
           <div className="mods-remote-status">
             <span>更新ステータス</span>
             <strong>{loadingRemoteStates ? "チェックしています" : `${updatableCount} 件更新可能`}</strong>
+            <small>最終確認: {checkedAtLabel}</small>
+            <button
+              className="secondary-button"
+              onClick={onCheckUpdates}
+              disabled={!profile || loadingRemoteStates || checkingUpdates}
+            >
+              {checkingUpdates ? "更新チェック中..." : "更新チェック"}
+            </button>
             <button
               className="play-button mods-bulk-update"
               onClick={onUpdateAll}
-              disabled={!profile || loadingRemoteStates || updatableCount === 0 || updatingAll}
+              disabled={!profile || loadingRemoteStates || checkingUpdates || updatableCount === 0 || updatingAll}
             >
               {updatingAll ? "すべて更新中..." : "すべて更新"}
             </button>
