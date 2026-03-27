@@ -681,6 +681,31 @@ code {
   border-color: rgba(88, 117, 154, 0.22);
 }
 
+.progress-toast-button {
+  width: 100%;
+  display: grid;
+  text-align: left;
+  overflow: hidden;
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    background 140ms ease;
+}
+
+.progress-toast-button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(59, 127, 213, 0.28);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 1), rgba(231, 243, 255, 0.96));
+  box-shadow: 0 20px 34px rgba(65, 118, 186, 0.16);
+}
+
+.progress-toast-button:focus-visible {
+  outline: 2px solid rgba(59, 127, 213, 0.34);
+  outline-offset: 2px;
+}
+
 .progress-toast-head {
   display: flex;
   justify-content: space-between;
@@ -710,6 +735,23 @@ code {
   background:
     linear-gradient(90deg, #4aa85c 0%, #62bb73 42%, #3b7fd5 100%);
   transition: width 180ms ease;
+}
+
+.progress-toast-foot {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--copy-dim);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.progress-toast-open {
+  color: #2b5f9e;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .hero-text,

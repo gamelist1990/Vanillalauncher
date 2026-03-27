@@ -85,6 +85,65 @@ export function formatIsoDate(value?: string | null) {
   }).format(date);
 }
 
+export function formatDateTime(value: number) {
+  return new Intl.DateTimeFormat("ja-JP", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(value);
+}
+
+export function formatClockTime(value: number) {
+  return new Intl.DateTimeFormat("ja-JP", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(value);
+}
+
+export function formatDurationMs(value: number) {
+  const totalSeconds = Math.max(0, Math.round(value / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return minutes > 0 ? `${hours}時間${minutes}分` : `${hours}時間`;
+  }
+
+  if (minutes > 0) {
+    return seconds > 0 ? `${minutes}分${seconds}秒` : `${minutes}分`;
+  }
+
+  return `${seconds}秒`;
+}
+
+export function formatRelativeMs(value: number) {
+  const totalSeconds = Math.max(0, Math.round(value / 1000));
+
+  if (totalSeconds < 5) {
+    return "たった今";
+  }
+
+  if (totalSeconds < 60) {
+    return `${totalSeconds}秒前`;
+  }
+
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  if (totalMinutes < 60) {
+    return `${totalMinutes}分前`;
+  }
+
+  const totalHours = Math.floor(totalMinutes / 60);
+  if (totalHours < 24) {
+    return `${totalHours}時間前`;
+  }
+
+  const totalDays = Math.floor(totalHours / 24);
+  return `${totalDays}日前`;
+}
+
 export function formatLastUsed(value?: string | null) {
   if (!value) {
     return "未使用";

@@ -3,10 +3,13 @@ import { ModpackExportModal } from "../../components/ModpackExportModal";
 import { ModpackVersionModal } from "../../components/ModpackVersionModal";
 import { ProfileNameModal } from "../../components/ProfileNameModal";
 import { ProfileVisualModal } from "../../components/ProfileVisualModal";
+import { ProgressDetailModal } from "../../components/ProgressDetailModal";
+import type { ProgressSnapshot } from "../../app/types";
 import type {
   ConfirmDialogState,
   ModpackExportDialogState,
   ModpackVersionDialogState,
+  ProgressDetailDialogState,
   ProfileNameDialogState,
   ProfileVisualDialogState,
 } from "./types";
@@ -17,6 +20,8 @@ type AppModalsProps = {
   profileNameDialog: ProfileNameDialogState | null;
   modpackVersionDialog: ModpackVersionDialogState | null;
   modpackExportDialog: ModpackExportDialogState | null;
+  progressDetailDialog: ProgressDetailDialogState | null;
+  progressDetailSnapshot: ProgressSnapshot | null;
   busyAction: string | null;
   onCloseConfirmDialog: () => void;
   onConfirmDialog: () => void;
@@ -33,6 +38,7 @@ type AppModalsProps = {
   onCloseModpackExportDialog: () => void;
   onConfirmModpackExport: () => void;
   onSelectModpackExportFormat: (value: "curseforge" | "modrinth") => void;
+  onCloseProgressDetailDialog: () => void;
 };
 
 export function AppModals({
@@ -41,6 +47,8 @@ export function AppModals({
   profileNameDialog,
   modpackVersionDialog,
   modpackExportDialog,
+  progressDetailDialog,
+  progressDetailSnapshot,
   busyAction,
   onCloseConfirmDialog,
   onConfirmDialog,
@@ -57,6 +65,7 @@ export function AppModals({
   onCloseModpackExportDialog,
   onConfirmModpackExport,
   onSelectModpackExportFormat,
+  onCloseProgressDetailDialog,
 }: AppModalsProps) {
   return (
     <>
@@ -115,6 +124,12 @@ export function AppModals({
         onClose={onCloseModpackExportDialog}
         onConfirm={onConfirmModpackExport}
         onSelectFormat={onSelectModpackExportFormat}
+      />
+
+      <ProgressDetailModal
+        open={progressDetailDialog !== null && progressDetailSnapshot !== null}
+        progress={progressDetailSnapshot}
+        onClose={onCloseProgressDetailDialog}
       />
     </>
   );

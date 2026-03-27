@@ -1,0 +1,131 @@
+name: Windows Release Builds
+
+on:
+  push:
+    branches:
+      - "**"
+  release:
+    types:
+      - published
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-release-builds-${{ github.event_name }}-${{ github.event.release.tag_name || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-publish:
+    if: github.event_name != 'release' || github.event.release.prerelease == false
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri -> target
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Tauri release
+        run: npm run tauri build
+
+      - name: Resolve release assets
+        id: assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $exe = (Resolve-Path "src-tauri/target/release/vanillalauncher.exe").Path
+          $pdb = (Resolve-Path "src-tauri/target/release/vanillalauncher.pdb").Path
+
+          $msi = (Get-ChildItem "src-tauri/target/release/bundle/msi/*.msi" | Select-Object -First 1).FullName
+          if (-not $msi) {
+            throw "MSI bundle was not found."
+          }
+
+          $nsis = (Get-ChildItem "src-tauri/target/release/bundle/nsis/*-setup.exe" | Select-Object -First 1).FullName
+          if (-not $nsis) {
+            throw "NSIS bundle was not found."
+          }
+
+          "exe=$exe" >> $env:GITHUB_OUTPUT
+          "pdb=$pdb" >> $env:GITHUB_OUTPUT
+          "msi=$msi" >> $env:GITHUB_OUTPUT
+          "nsis=$nsis" >> $env:GITHUB_OUTPUT
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build-assets
+          path: |
+            ${{ steps.assets.outputs.exe }}
+            ${{ steps.assets.outputs.pdb }}
+            ${{ steps.assets.outputs.msi }}
+            ${{ steps.assets.outputs.nsis }}
+
+      - name: Publish rolling pre-release
+        if: github.event_name == 'push'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $shortSha = $env:GITHUB_SHA.Substring(0, 7)
+          $notes = @"
+          Automated prerelease build.
+
+          Branch: $env:GITHUB_REF_NAME
+          Commit: $shortSha
+          Source: https://github.com/$env:GITHUB_REPOSITORY/commit/$env:GITHUB_SHA
+          "@
+
+          gh release view pre-release *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release delete pre-release --yes --cleanup-tag
+          }
+
+          gh release create pre-release `
+            "${{ steps.assets.outputs.exe }}" `
+            "${{ steps.assets.outputs.pdb }}" `
+            "${{ steps.assets.outputs.msi }}" `
+            "${{ steps.assets.outputs.nsis }}" `
+            --target "$env:GITHUB_SHA" `
+            --title "Pre-release ($shortSha)" `
+            --notes $notes `
+            --prerelease `
+            --latest=false
+
+      - name: Upload assets to published release
+        if: github.event_name == 'release' && github.event.release.prerelease == false
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          gh release upload "$env:RELEASE_TAG" `
+            "${{ steps.assets.outputs.exe }}" `
+            "${{ steps.assets.outputs.pdb }}" `
+            "${{ steps.assets.outputs.msi }}" `
+            "${{ steps.assets.outputs.nsis }}" `
+            --clobber

@@ -15,6 +15,24 @@ export type ProgressState = {
   percent: number;
 };
 
+export type ProgressStatus = "active" | "completed" | "inactive";
+
+export type ProgressHistoryEntry = {
+  id: string;
+  timestamp: number;
+  title: string;
+  detail: string;
+  percent: number;
+};
+
+export type ProgressSnapshot = ProgressState & {
+  status: ProgressStatus;
+  startedAt: number;
+  updatedAt: number;
+  completedAt: number | null;
+  history: ProgressHistoryEntry[];
+};
+
 export type LauncherSnapshot = {
   minecraftRoot: string;
   launcherAvailable: boolean;

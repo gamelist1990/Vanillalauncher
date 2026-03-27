@@ -21,6 +21,7 @@ import type {
   ModpackExportResult,
   ModrinthProject,
   Notice,
+  ProgressSnapshot,
   ProgressState,
   SoftwareStatus,
   ViewMode,
@@ -35,6 +36,7 @@ import type {
   ConfirmDialogState,
   ModpackExportDialogState,
   ModpackVersionDialogState,
+  ProgressDetailDialogState,
   ProfileNameDialogState,
   ProfileVisualDialogState,
 } from "./features/app-shell/types";
@@ -61,6 +63,87 @@ type ModRemoteStateCacheEntry = {
 };
 
 const MOD_UPDATE_CACHE_WINDOW_MS = 5 * 60 * 1000;
+const PROGRESS_HISTORY_LIMIT = 18;
+
+function shouldAppendProgressHistoryEntry(
+  snapshot: ProgressSnapshot | undefined,
+  progress: ProgressState,
+) {
+  if (!snapshot || snapshot.history.length === 0) {
+    return true;
+  }
+
+  const lastEntry = snapshot.history[snapshot.history.length - 1];
+  if (lastEntry.title !== progress.title || lastEntry.detail !== progress.detail) {
+    return true;
+  }
+
+  if (progress.percent >= 100 && lastEntry.percent < 100) {
+    return true;
+  }
+
+  const lastBucket = Math.floor(Math.max(0, Math.min(99, lastEntry.percent)) / 10);
+  const nextBucket = Math.floor(Math.max(0, Math.min(99, progress.percent)) / 10);
+  return nextBucket > lastBucket;
+}
+
+function upsertProgressSnapshotEntry(
+  current: Record<string, ProgressSnapshot>,
+  progress: ProgressState,
+) {
+  const now = Date.now();
+  const existing = current[progress.operationId];
+  const nextStatus: ProgressSnapshot["status"] =
+    progress.percent >= 100 ? "completed" : "active";
+  const nextHistory = shouldAppendProgressHistoryEntry(existing, progress)
+    ? [
+        ...(existing?.history ?? []),
+        {
+          id: `${progress.operationId}-${now}`,
+          timestamp: now,
+          title: progress.title,
+          detail: progress.detail,
+          percent: progress.percent,
+        },
+      ].slice(-PROGRESS_HISTORY_LIMIT)
+    : existing?.history ?? [];
+
+  return {
+    ...current,
+    [progress.operationId]: {
+      ...progress,
+      status: nextStatus,
+      startedAt: existing?.startedAt ?? now,
+      updatedAt: now,
+      completedAt: progress.percent >= 100 ? existing?.completedAt ?? now : null,
+      history: nextHistory,
+    },
+  };
+}
+
+function markProgressSnapshotEnded(
+  current: Record<string, ProgressSnapshot>,
+  operationId: string,
+) {
+  const existing = current[operationId];
+  if (!existing || existing.status !== "active") {
+    return current;
+  }
+
+  const endedAt = Date.now();
+  const nextStatus: ProgressSnapshot["status"] =
+    existing.percent >= 100 ? "completed" : "inactive";
+
+  return {
+    ...current,
+    [operationId]: {
+      ...existing,
+      status: nextStatus,
+      updatedAt: endedAt,
+      completedAt: existing.percent >= 100 ? existing.completedAt ?? endedAt : existing.completedAt,
+    },
+  };
+}
 
 function App() {
   const [snapshot, setSnapshot] = useState<LauncherSnapshot | null>(null);
@@ -68,6 +151,7 @@ function App() {
   const [activeView, setActiveView] = useState<ViewMode>("play");
   const [notices, setNotices] = useState<Notice[]>([]);
   const [progressItems, setProgressItems] = useState<ProgressState[]>([]);
+  const [progressSnapshots, setProgressSnapshots] = useState<Record<string, ProgressSnapshot>>({});
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [isCompactSidebar, setIsCompactSidebar] = useState(() =>
     typeof window === "undefined"
@@ -99,6 +183,7 @@ function App() {
   const [modRemoteStateCacheMap, setModRemoteStateCacheMap] =
     useState<Record<string, ModRemoteStateCacheEntry>>({});
   const modRemoteFetchTokenRef = useRef(0);
+  const modVisualFetchTokenRef = useRef(0);
   const loaderCatalogRequestTokenRef = useRef(0);
   const lastLoaderCatalogErrorKeyRef = useRef<string | null>(null);
 
@@ -114,6 +199,7 @@ function App() {
   const [profileNameDialog, setProfileNameDialog] = useState<ProfileNameDialogState | null>(null);
   const [modpackVersionDialog, setModpackVersionDialog] = useState<ModpackVersionDialogState | null>(null);
   const [modpackExportDialog, setModpackExportDialog] = useState<ModpackExportDialogState | null>(null);
+  const [progressDetailDialog, setProgressDetailDialog] = useState<ProgressDetailDialogState | null>(null);
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
   const [softwareStatus, setSoftwareStatus] = useState<SoftwareStatus | null>(null);
   const [loadingSettings, setLoadingSettings] = useState(false);
@@ -140,6 +226,9 @@ function App() {
     : null;
   const accountScanProgress = accountScanOperationId
     ? progressItems.find((item) => item.operationId === accountScanOperationId) ?? null
+    : null;
+  const selectedProgressSnapshot = progressDetailDialog
+    ? progressSnapshots[progressDetailDialog.operationId] ?? null
     : null;
   const selectedProfileModSignature =
     selectedProfile?.mods
@@ -189,12 +278,14 @@ function App() {
       const next = current.filter((item) => item.operationId !== progress.operationId);
       return [...next, progress];
     });
+    setProgressSnapshots((current) => upsertProgressSnapshotEntry(current, progress));
   }
 
   function clearProgress(operationId: string) {
     setProgressItems((current) =>
       current.filter((item) => item.operationId !== operationId),
     );
+    setProgressSnapshots((current) => markProgressSnapshotEnded(current, operationId));
   }
 
   function scheduleProgressClear(operationId: string) {
@@ -422,6 +513,112 @@ function App() {
     selectedProfile?.id,
     selectedProfileModSignature,
     modRemoteStateCacheMap,
+  ]);
+
+  useEffect(() => {
+    if (!selectedProfile) {
+      return;
+    }
+
+    const currentProfile = selectedProfile;
+    const visualCandidateMods = currentProfile.mods.filter(
+      (mod) => (mod.sourceProjectId ?? "").trim() !== "",
+    );
+    const shouldLivePaint = activeView === "mods";
+
+    if (visualCandidateMods.length === 0) {
+      return;
+    }
+
+    const cached = modRemoteStateCacheMap[currentProfile.id];
+    if (
+      cached &&
+      cached.modSignature === selectedProfileModSignature &&
+      Object.keys(cached.visualStates).length > 0
+    ) {
+      return;
+    }
+
+    const fetchToken = modVisualFetchTokenRef.current + 1;
+    modVisualFetchTokenRef.current = fetchToken;
+    let cancelled = false;
+
+    void (async () => {
+      const visualStates: Record<string, ModRemoteState> = {};
+      const fetchQueue = [...visualCandidateMods];
+      const workerCount = Math.min(6, fetchQueue.length);
+
+      await Promise.allSettled(
+        Array.from({ length: workerCount }, async () => {
+          while (true) {
+            const mod = fetchQueue.shift();
+            if (!mod) {
+              return;
+            }
+
+            try {
+              const state = await launcherApi.getProfileModVisualState(currentProfile.id, mod.fileName);
+              if (!state) {
+                continue;
+              }
+
+              visualStates[state.fileName] = state;
+
+              if (cancelled || modVisualFetchTokenRef.current !== fetchToken) {
+                return;
+              }
+
+              if (shouldLivePaint) {
+                // 取得できたアイコンから順次反映して、体感表示を速くする。
+                setModVisualStateMap((current) => ({
+                  ...current,
+                  [state.fileName]: {
+                    ...(current[state.fileName] ?? {}),
+                    ...state,
+                  },
+                }));
+              }
+            } catch {
+              // アイコンやリンクの先読みだけなので、失敗しても一覧表示は継続する。
+            }
+          }
+        }),
+      );
+
+      if (
+        cancelled ||
+        modVisualFetchTokenRef.current !== fetchToken ||
+        Object.keys(visualStates).length === 0
+      ) {
+        return;
+      }
+
+      setModRemoteStateCacheMap((current) => {
+        const existing = current[currentProfile.id];
+
+        return {
+          ...current,
+          [currentProfile.id]: {
+            modSignature: selectedProfileModSignature,
+            visualStates: {
+              ...(existing?.visualStates ?? {}),
+              ...visualStates,
+            },
+            remoteStates: existing?.remoteStates ?? {},
+            checkedAt: existing?.checkedAt ?? 0,
+          },
+        };
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeView,
+    modRemoteStateCacheMap,
+    selectedProfile,
+    selectedProfileModSignature,
   ]);
 
   async function handleCheckModUpdates() {
@@ -1301,8 +1498,51 @@ function App() {
       return;
     }
 
+    let effectiveState = remoteState;
+
+    if (!effectiveState?.projectUrl) {
+      try {
+        const visualState = await launcherApi.getProfileModVisualState(selectedProfile.id, mod.fileName);
+        if (visualState) {
+          effectiveState = {
+            ...(effectiveState ?? {}),
+            ...visualState,
+          };
+
+          setModVisualStateMap((current) => ({
+            ...current,
+            [visualState.fileName]: {
+              ...(current[visualState.fileName] ?? {}),
+              ...visualState,
+            },
+          }));
+          setModRemoteStateCacheMap((current) => {
+            const existing = current[selectedProfile.id];
+
+            return {
+              ...current,
+              [selectedProfile.id]: {
+                modSignature: selectedProfileModSignature,
+                visualStates: {
+                  ...(existing?.visualStates ?? {}),
+                  [visualState.fileName]: {
+                    ...(existing?.visualStates?.[visualState.fileName] ?? {}),
+                    ...visualState,
+                  },
+                },
+                remoteStates: existing?.remoteStates ?? {},
+                checkedAt: existing?.checkedAt ?? 0,
+              },
+            };
+          });
+        }
+      } catch {
+        // 開ける URL が取れなくても、最後は mods フォルダを開くフォールバックへ進む。
+      }
+    }
+
     if (
-      remoteState?.source === "curseforge" ||
+      effectiveState?.source === "curseforge" ||
       mod.sourceProjectId?.startsWith("curseforge:")
     ) {
       try {
@@ -1315,13 +1555,13 @@ function App() {
       return;
     }
 
-    if (remoteState?.projectUrl) {
-      await handleOpenGuide(remoteState.projectUrl);
+    if (effectiveState?.projectUrl) {
+      await handleOpenGuide(effectiveState.projectUrl);
       return;
     }
 
-    if (remoteState?.source === "modrinth" && remoteState?.projectId) {
-      await handleOpenGuide(`https://modrinth.com/project/${remoteState.projectId}`);
+    if (effectiveState?.source === "modrinth" && effectiveState?.projectId) {
+      await handleOpenGuide(`https://modrinth.com/project/${effectiveState.projectId}`);
       return;
     }
 
@@ -1505,6 +1745,9 @@ function App() {
           notices={notices}
           progressItems={progressItems}
           onDismissNotice={dismissNotice}
+          onOpenProgress={(operationId) => {
+            setProgressDetailDialog({ operationId });
+          }}
         />
 
         <AppModals
@@ -1513,6 +1756,8 @@ function App() {
           profileNameDialog={profileNameDialog}
           modpackVersionDialog={modpackVersionDialog}
           modpackExportDialog={modpackExportDialog}
+          progressDetailDialog={progressDetailDialog}
+          progressDetailSnapshot={selectedProgressSnapshot}
           busyAction={busyAction}
           onCloseConfirmDialog={() => setConfirmDialog(null)}
           onConfirmDialog={() => void handleConfirmDialog()}
@@ -1549,6 +1794,7 @@ function App() {
               current ? { ...current, selectedFormat: value as ModpackExportFormat } : current,
             );
           }}
+          onCloseProgressDetailDialog={() => setProgressDetailDialog(null)}
         />
 
         <HeroPanel

@@ -37,6 +37,7 @@ use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 const MODRINTH_API_BASE: &str = "https://api.modrinth.com/v2";
 const MODRINTH_USER_AGENT: &str = "vanillalauncher/0.1.0 (tauri)";
 const MODRINTH_CACHE_TTL: Duration = Duration::from_secs(120);
+const MODRINTH_VISUAL_CACHE_TTL: Duration = Duration::from_secs(60 * 60 * 24 * 30);
 const CURSEFORGE_API_BASE: &str = "https://api.curseforge.com";
 const CURSEFORGE_MINECRAFT_GAME_ID: &str = "432";
 const CURSEFORGE_MINECRAFT_MOD_CLASS_ID: &str = "6";
@@ -494,9 +495,15 @@ async fn build_mod_visual_state(
         .or_else(|| parse_curseforge_project_id(&source_project_id))
     {
         let file_metadata = match tracked_entry.curseforge_file_id {
-            Some(file_id) => fetch_curseforge_file_metadata(client, curseforge_project_id, file_id)
+            Some(file_id) => {
+                fetch_curseforge_file_metadata_for_visual_cache(
+                    client,
+                    curseforge_project_id,
+                    file_id,
+                )
                 .await
-                .ok(),
+                .ok()
+            }
             None => None,
         };
 
@@ -524,7 +531,7 @@ async fn build_mod_visual_state(
         .strip_prefix("modrinth:")
         .unwrap_or(&source_project_id)
         .to_string();
-    let project = fetch_project_details(client, &modrinth_project_id)
+    let project = fetch_project_details_for_visual_cache(client, &modrinth_project_id)
         .await
         .ok();
 
@@ -1827,6 +1834,23 @@ async fn fetch_project_details(
     parse_project_details(&body).ok_or_else(|| "Modpack 情報の形式が想定と異なります。".to_string())
 }
 
+async fn fetch_project_details_for_visual_cache(
+    client: &Client,
+    project_id: &str,
+) -> Result<ModrinthProject, String> {
+    let body = fetch_json_with_cache_for_ttl(
+        format!("visual-project|{project_id}"),
+        client.get(format!("{MODRINTH_API_BASE}/project/{project_id}")),
+        "Modpack 情報を取得できませんでした",
+        "Modpack の取得に失敗しました",
+        "Modpack 情報を解析できませんでした",
+        MODRINTH_VISUAL_CACHE_TTL,
+    )
+    .await?;
+
+    parse_project_details(&body).ok_or_else(|| "Modpack 情報の形式が想定と異なります。".to_string())
+}
+
 async fn fetch_modpack_version(
     client: &Client,
     project_id: &str,
@@ -2520,6 +2544,30 @@ async fn fetch_curseforge_file_metadata(
     Ok(body.data)
 }
 
+async fn fetch_curseforge_file_metadata_for_visual_cache(
+    client: &Client,
+    project_id: u64,
+    file_id: u64,
+) -> Result<CurseforgeWebsiteFile, String> {
+    let body = fetch_json_with_cache_for_ttl(
+        format!("visual-curseforge-file|{project_id}|{file_id}"),
+        client
+            .get(format!(
+                "https://www.curseforge.com/api/v1/mods/{project_id}/files/{file_id}"
+            ))
+            .header("Accept", "application/json"),
+        "CurseForge ファイル情報を取得できませんでした",
+        "CurseForge ファイル情報の取得に失敗しました",
+        "CurseForge ファイル情報を解析できませんでした",
+        MODRINTH_VISUAL_CACHE_TTL,
+    )
+    .await?;
+
+    serde_json::from_value::<CurseforgeWebsiteFileResponse>(body)
+        .map(|entry| entry.data)
+        .map_err(|error| format!("CurseForge ファイル情報を解析できませんでした: {error}"))
+}
+
 async fn fetch_curseforge_files(
     client: &Client,
     project_id: u64,
@@ -2727,6 +2775,25 @@ async fn fetch_json_with_cache(
     status_error_label: &str,
     parse_error_label: &str,
 ) -> Result<Value, String> {
+    fetch_json_with_cache_for_ttl(
+        cache_key,
+        request,
+        connect_error_label,
+        status_error_label,
+        parse_error_label,
+        MODRINTH_CACHE_TTL,
+    )
+    .await
+}
+
+async fn fetch_json_with_cache_for_ttl(
+    cache_key: String,
+    request: reqwest::RequestBuilder,
+    connect_error_label: &str,
+    status_error_label: &str,
+    parse_error_label: &str,
+    ttl: Duration,
+) -> Result<Value, String> {
     if let Some(value) = get_cached_json(&cache_key) {
         return Ok(value);
     }
@@ -2742,7 +2809,7 @@ async fn fetch_json_with_cache(
         .json()
         .await
         .map_err(|error| format!("{parse_error_label}: {error}"))?;
-    put_cached_json(cache_key, body.clone());
+    put_cached_json(cache_key, body.clone(), ttl);
     Ok(body)
 }
 
@@ -2767,7 +2834,7 @@ fn get_cached_json(cache_key: &str) -> Option<Value> {
     Some(entry.value)
 }
 
-fn put_cached_json(cache_key: String, value: Value) {
+fn put_cached_json(cache_key: String, value: Value, ttl: Duration) {
     if !settings::get_app_settings().temp_cache_enabled {
         return;
     }
@@ -2779,7 +2846,7 @@ fn put_cached_json(cache_key: String, value: Value) {
 
     let path = cache_file_path(&cache_key);
     let now = chrono::Utc::now().timestamp_millis();
-    let expires_at = now + MODRINTH_CACHE_TTL.as_millis() as i64;
+    let expires_at = now + ttl.as_millis() as i64;
     let entry = CachedJsonResponse {
         expires_at_unix_ms: expires_at,
         value,

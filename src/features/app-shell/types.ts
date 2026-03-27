@@ -32,3 +32,7 @@ export type ModpackExportDialogState = {
   profileName: string;
   selectedFormat: ModpackExportFormat;
 };
+
+export type ProgressDetailDialogState = {
+  operationId: string;
+};

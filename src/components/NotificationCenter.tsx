@@ -5,12 +5,14 @@ type NotificationCenterProps = {
   notices: Notice[];
   progressItems: ProgressState[];
   onDismissNotice: (noticeId: string) => void;
+  onOpenProgress: (operationId: string) => void;
 };
 
 export function NotificationCenter({
   notices,
   progressItems,
   onDismissNotice,
+  onOpenProgress,
 }: NotificationCenterProps) {
   useEffect(() => {
     if (notices.length === 0) {
@@ -36,7 +38,13 @@ export function NotificationCenter({
   return (
     <aside className="notification-viewport" aria-live="polite">
       {progressItems.map((item) => (
-        <article className="progress-toast" key={item.operationId}>
+        <button
+          className="progress-toast progress-toast-button"
+          key={item.operationId}
+          type="button"
+          onClick={() => onOpenProgress(item.operationId)}
+          aria-label={`${item.title} の詳細な進捗を開く`}
+        >
           <div className="progress-toast-head">
             <span className="progress-toast-kicker">進行中</span>
             <strong>{Math.round(item.percent)}%</strong>
@@ -49,7 +57,11 @@ export function NotificationCenter({
               style={{ width: `${Math.max(4, Math.min(100, item.percent))}%` }}
             />
           </div>
-        </article>
+          <div className="progress-toast-foot">
+            <span>経過時間・ETA・履歴を表示</span>
+            <span className="progress-toast-open">詳細を開く</span>
+          </div>
+        </button>
       ))}
 
       {notices.map((notice) => (
