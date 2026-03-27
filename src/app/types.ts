@@ -19,13 +19,27 @@ export type LauncherSnapshot = {
   minecraftRoot: string;
   launcherAvailable: boolean;
   activeAccount?: ActiveLauncherAccount | null;
+  launcherAccounts: LauncherAccountEntry[];
   profiles: LauncherProfile[];
   summary: LauncherSummary;
 };
 
 export type ActiveLauncherAccount = {
+  localId: string;
   username: string;
   authSource: string;
+  hasJavaAccess: boolean;
+};
+
+export type LauncherAccountEntry = {
+  localId: string;
+  username: string;
+  gamerTag?: string | null;
+  microsoftUsername?: string | null;
+  authSource: string;
+  hasJavaAccess: boolean;
+  isActive: boolean;
+  isSelectable: boolean;
 };
 
 export type LauncherSummary = {

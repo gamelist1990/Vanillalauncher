@@ -1,14 +1,20 @@
 use crate::{
     app_log,
     minecraft::{
-        ensure_launcher_profiles_file, find_profile, minecraft_root, normalize_loader,
-        open_official_launcher, profile_instance_dir, read_active_launcher_account,
+        ensure_launcher_profiles_file, find_profile,
+        merge_discovered_launcher_accounts as merge_discovered_launcher_accounts_in_minecraft,
+        minecraft_root, normalize_loader, open_official_launcher, profile_instance_dir,
+        read_active_launcher_account,
+        read_discovered_launcher_accounts as read_discovered_launcher_accounts_in_minecraft,
+        read_launcher_accounts,
+        scan_and_merge_launcher_accounts as scan_and_merge_launcher_accounts_in_minecraft,
+        set_active_launcher_account as set_active_launcher_account_in_minecraft,
         set_java_page_as_last_visited, set_profile_last_used, sync_profile_mods_to_game_dir,
         upsert_custom_profile, CustomProfileDraft,
     },
     models::{
-        FabricCatalog, FabricInstallResult, LaunchResult, LoaderCatalog, LoaderInstallResult,
-        LoaderVersionSummary, MinecraftVersionSummary,
+        ActionResult, FabricCatalog, FabricInstallResult, LaunchResult, LauncherAccountEntry,
+        LoaderCatalog, LoaderInstallResult, LoaderVersionSummary, MinecraftVersionSummary,
     },
     progress::emit_progress,
 };
@@ -167,6 +173,229 @@ pub async fn ensure_xbox_rps_state(
     xbox_auth::ensure_xbox_rps_state(app, operation_id).await
 }
 
+pub fn get_launcher_accounts() -> Result<Vec<LauncherAccountEntry>, String> {
+    let accounts = read_launcher_accounts()?;
+    let discovered_accounts = match read_discovered_launcher_accounts_in_minecraft() {
+        Ok(accounts) => accounts,
+        Err(error) => {
+            app_log::append_log(
+                "WARN",
+                format!("failed to read discovered launcher accounts: {error}"),
+            );
+            Vec::new()
+        }
+    };
+    let active_local_id = read_active_launcher_account()?.and_then(|account| account.local_id);
+    let java_access_hints = xbox_auth::read_local_launcher_java_access_hints();
+    let mut seen_identity_keys = HashSet::new();
+
+    let mut entries = Vec::new();
+
+    for account in &accounts {
+        let keys = launcher_account_identity_keys(account);
+        if keys.iter().any(|key| seen_identity_keys.contains(key)) {
+            continue;
+        }
+        let Some(entry) = build_launcher_account_entry(
+            account,
+            active_local_id.as_deref(),
+            &java_access_hints,
+            true,
+            "official-launcher",
+        ) else {
+            continue;
+        };
+        for key in keys {
+            seen_identity_keys.insert(key);
+        }
+        entries.push(entry);
+    }
+
+    for account in &discovered_accounts {
+        let keys = launcher_account_identity_keys(account);
+        if keys.iter().any(|key| seen_identity_keys.contains(key)) {
+            continue;
+        }
+        let Some(entry) = build_launcher_account_entry(
+            account,
+            active_local_id.as_deref(),
+            &java_access_hints,
+            false,
+            "pc-scan",
+        ) else {
+            continue;
+        };
+        for key in keys {
+            seen_identity_keys.insert(key);
+        }
+        entries.push(entry);
+    }
+
+    entries.sort_by(|left, right| {
+        right
+            .is_active
+            .cmp(&left.is_active)
+            .then_with(|| right.is_selectable.cmp(&left.is_selectable))
+            .then_with(|| right.has_java_access.cmp(&left.has_java_access))
+            .then_with(|| {
+                left.username
+                    .to_lowercase()
+                    .cmp(&right.username.to_lowercase())
+            })
+    });
+
+    Ok(entries)
+}
+
+pub fn set_active_launcher_account(local_id: String) -> Result<ActionResult, String> {
+    let display_name = set_active_launcher_account_in_minecraft(&local_id)?;
+    Ok(ActionResult {
+        message: format!("{display_name} を Launcher の選択アカウントに切り替えました。"),
+        file_name: local_id,
+    })
+}
+
+pub async fn scan_launcher_accounts(
+    app: Option<&AppHandle>,
+    operation_id: Option<&str>,
+) -> Result<ActionResult, String> {
+    let emit_scan_progress = |detail: String, percent: f64| {
+        if let (Some(app), Some(operation_id)) = (app, operation_id) {
+            emit_progress(
+                app,
+                operation_id,
+                "Launcher アカウント再検出",
+                detail,
+                percent,
+            );
+        }
+    };
+
+    emit_scan_progress("Launcher 保存ファイルを確認しています。".to_string(), 8.0);
+    let (scanned_files, merged_accounts, merged_entitlements) =
+        scan_and_merge_launcher_accounts_in_minecraft()?;
+    emit_scan_progress(
+        format!(
+            "Launcher 保存ファイルを確認しました。{} 件の保存ファイル、{} 件のアカウント、{} 件の所有権情報を取り込みました。",
+            scanned_files, merged_accounts, merged_entitlements
+        ),
+        24.0,
+    );
+    let launcher_accounts = read_launcher_accounts()?;
+    emit_scan_progress("PC 内の認証キャッシュを解析しています。".to_string(), 30.0);
+    let discovered_accounts =
+        xbox_auth::read_cached_xbox_launcher_accounts(&launcher_accounts, app, operation_id)
+            .await?;
+    let detected_candidates = discovered_accounts.len();
+    emit_scan_progress(
+        format!(
+            "検出した候補を Launcher 一覧へ取り込んでいます。{} 件の候補を整理しました。",
+            detected_candidates
+        ),
+        92.0,
+    );
+    let merged_discovered = merge_discovered_launcher_accounts_in_minecraft(&discovered_accounts)?;
+    emit_scan_progress(
+        format!(
+            "再検出が完了しました。PC 内では {} 件の候補を確認し、そのうち {} 件を新規保持しました。",
+            detected_candidates, merged_discovered
+        ),
+        100.0,
+    );
+    Ok(ActionResult {
+        message: format!(
+            "Launcher 保存先と PC の認証キャッシュを再検出しました。Launcher 保存ファイルは {} 件確認し、新規で {} 件の Launcher アカウントと {} 件の所有権情報を取り込みました。PC 内では {} 件のアカウント候補を確認し、そのうち {} 件を新規保持しました。",
+            scanned_files, merged_accounts, merged_entitlements, detected_candidates, merged_discovered
+        ),
+        file_name: "launcher_accounts_microsoft_store.json".to_string(),
+    })
+}
+
+fn build_launcher_account_entry(
+    account: &crate::minecraft::LauncherAccount,
+    active_local_id: Option<&str>,
+    java_access_hints: &HashMap<String, bool>,
+    is_selectable: bool,
+    auth_source: &str,
+) -> Option<LauncherAccountEntry> {
+    let local_id = account
+        .local_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?
+        .to_string();
+    let display_name = crate::minecraft::preferred_launcher_account_display_name(account)?;
+
+    Some(LauncherAccountEntry {
+        local_id: local_id.clone(),
+        username: display_name,
+        gamer_tag: account.gamer_tag.clone(),
+        microsoft_username: account.username.clone(),
+        auth_source: auth_source.to_string(),
+        has_java_access: xbox_auth::launcher_account_has_java_access_hint(
+            account,
+            java_access_hints,
+        ),
+        is_active: active_local_id == Some(local_id.as_str()),
+        is_selectable,
+    })
+}
+
+fn launcher_account_identity_keys(account: &crate::minecraft::LauncherAccount) -> Vec<String> {
+    let mut keys = Vec::new();
+
+    for value in [
+        account.local_id.as_deref(),
+        account.profile_id.as_deref(),
+        account.xuid.as_deref(),
+        account.username.as_deref(),
+        account.gamer_tag.as_deref(),
+    ] {
+        let Some(value) = value.map(str::trim).filter(|entry| !entry.is_empty()) else {
+            continue;
+        };
+        keys.push(value.to_ascii_lowercase());
+    }
+
+    keys.sort();
+    keys.dedup();
+    keys
+}
+
+fn cached_xbox_account_hint_to_launcher_account(
+    hint: xbox_auth::CachedXboxAccountHint,
+) -> Option<crate::minecraft::LauncherAccount> {
+    let local_id = hint
+        .local_id
+        .clone()
+        .or(hint.xuid.clone())
+        .or(hint.username.clone())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())?;
+
+    Some(crate::minecraft::LauncherAccount {
+        username: hint
+            .username
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        gamer_tag: hint
+            .gamer_tag
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        profile_id: None,
+        access_token: None,
+        access_token_expires_at: None,
+        client_token: None,
+        xuid: hint
+            .xuid
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        local_id: Some(local_id),
+        user_properties: None,
+        xbox_profile_verified: false,
+    })
+}
+
 pub async fn launch_profile_directly(
     _app: &AppHandle,
     profile_id: String,
@@ -205,7 +434,7 @@ pub async fn launch_profile_directly(
         let launch_mode = open_official_launcher()?;
         return Ok(LaunchResult {
             message: format!(
-                "{} は有効な公式認証トークンを取得できなかったため、公式 Minecraft Launcher で起動しました。公式Launcher側でログイン更新後にそのままプレイしてください。",
+                "{} は Minecraft Java へのアクセス権が確認できる認証情報を取得できなかったため、公式 Minecraft Launcher で起動しました。公式 Launcher 側で Java 版を利用できる Microsoft / Xbox アカウントにログインしてから、そのままプレイしてください。",
                 profile.name
             ),
             launch_mode,
@@ -235,6 +464,11 @@ pub async fn launch_profile_directly(
 
     let auth_detail = match launch_context.auth_mode.as_str() {
         "direct-account" => "ログイン状態を引き継いで直接起動しています。",
+        "direct-account-local" => "公式ランチャーの所有権情報を照合して直接起動しています。",
+        "direct-xbox-cache-local" => {
+            "Xbox キャッシュと公式ランチャーの所有権情報を照合して直接起動しています。"
+        }
+        "direct-offline-selected" => "選択したアカウント情報を使ってオフライン起動しています。",
         _ => "保存済みのランチャー環境を利用して直接起動しています。",
     };
 
@@ -312,6 +546,7 @@ struct VersionLaunchAuth {
     client_id: String,
     xuid: String,
     user_properties: String,
+    user_type: String,
     mode: String,
 }
 

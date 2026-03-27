@@ -57,7 +57,7 @@ pub(super) fn build_launch_arguments(
             .to_string_lossy()
             .to_string(),
     );
-    replacements.insert("user_type".to_string(), "msa".to_string());
+    replacements.insert("user_type".to_string(), auth.user_type.clone());
     replacements.insert("auth_session".to_string(), auth.access_token.clone());
 
     let mut arguments = Vec::new();
@@ -200,26 +200,20 @@ pub(super) fn extract_native_archive(archive_path: &Path, target_dir: &Path) -> 
 
 pub(super) async fn resolve_launch_auth() -> Result<VersionLaunchAuth, String> {
     let account = read_active_launcher_account()?;
+    let launcher_accounts = read_launcher_accounts()?;
+    let java_access_hints = xbox_auth::read_local_launcher_java_access_hints();
     app_log::append_log(
         "INFO",
         format!(
-            "resolve_launch_auth account_present={} launcher_access_token_present={}",
+            "resolve_launch_auth account_present={} launcher_accounts={} launcher_access_token_present={}",
             account.is_some(),
+            launcher_accounts.len(),
             account
                 .as_ref()
                 .and_then(|item| item.access_token.as_ref())
                 .is_some()
         ),
     );
-    let mut username = account
-        .as_ref()
-        .and_then(|account| account.gamer_tag.clone())
-        .or_else(|| {
-            account
-                .as_ref()
-                .and_then(|account| account.username.clone())
-        })
-        .unwrap_or_else(|| "Player".to_string());
     let raw_access_token = account
         .as_ref()
         .and_then(|account| account.access_token.clone())
@@ -227,12 +221,67 @@ pub(super) async fn resolve_launch_auth() -> Result<VersionLaunchAuth, String> {
     let expires_at = account
         .as_ref()
         .and_then(|account| account.access_token_expires_at.as_deref());
+    let active_account_profile = account
+        .as_ref()
+        .and_then(xbox_auth::launcher_account_profile);
 
-    let launcher_profile = if raw_access_token != "0"
+    let direct_account_auth = if raw_access_token != "0"
         && !xbox_auth::is_access_token_expired(&raw_access_token, expires_at)
     {
         app_log::append_log("INFO", "trying launcher_accounts access token");
-        xbox_auth::fetch_minecraft_profile_for_token(&raw_access_token).await
+        if let Some((profile, matched_account, used_local_hint)) =
+            xbox_auth::resolve_verified_minecraft_profile(
+                &raw_access_token,
+                "launcher_accounts access token",
+                &launcher_accounts,
+                &java_access_hints,
+            )
+            .await
+        {
+            let resolved_account = matched_account.or_else(|| account.clone());
+            if launch_auth_matches_selected_account(
+                account.as_ref(),
+                Some(&profile),
+                resolved_account.as_ref(),
+            ) {
+                Some((
+                    raw_access_token.clone(),
+                    profile,
+                    resolved_account,
+                    if used_local_hint {
+                        "direct-account-local".to_string()
+                    } else {
+                        "direct-account".to_string()
+                    },
+                ))
+            } else {
+                app_log::append_log(
+                    "WARN",
+                    "launcher_accounts access token resolved to a different account; ignoring",
+                );
+                None
+            }
+        } else if let Some(active_account) = account.clone().filter(|entry| {
+            xbox_auth::launcher_account_has_java_access_hint(entry, &java_access_hints)
+        }) {
+            active_account_profile.clone().map(|profile| {
+                app_log::append_log(
+                    "INFO",
+                    format!(
+                        "launcher_accounts access token fell back to local entitlement hint xuid={}",
+                        active_account.xuid.as_deref().unwrap_or("unknown")
+                    ),
+                );
+                (
+                    raw_access_token.clone(),
+                    profile,
+                    Some(active_account),
+                    "direct-account-local".to_string(),
+                )
+            })
+        } else {
+            None
+        }
     } else {
         app_log::append_log(
             "INFO",
@@ -241,7 +290,7 @@ pub(super) async fn resolve_launch_auth() -> Result<VersionLaunchAuth, String> {
         None
     };
 
-    let cached_xbox_tokens = if launcher_profile.is_none() {
+    let cached_xbox_tokens = if direct_account_auth.is_none() {
         match xbox_auth::read_cached_xbox_identity_tokens() {
             Ok(tokens) => {
                 if tokens.is_empty() {
@@ -267,8 +316,12 @@ pub(super) async fn resolve_launch_auth() -> Result<VersionLaunchAuth, String> {
     };
 
     let xbox_profile = if !cached_xbox_tokens.is_empty() {
-        let mut resolved_access_token: Option<String> = None;
-        let mut resolved_profile: Option<(String, String)> = None;
+        let mut resolved_auth: Option<(
+            String,
+            (String, String),
+            Option<crate::minecraft::LauncherAccount>,
+            String,
+        )> = None;
         let mut attempted_tokens = HashSet::new();
         let (planned_attempts, used_saved_state) =
             xbox_auth::build_prioritized_rps_attempts(&cached_xbox_tokens, 10);
@@ -302,84 +355,154 @@ pub(super) async fn resolve_launch_auth() -> Result<VersionLaunchAuth, String> {
             )
             .await;
             if let Some(access_token) = exchange_result {
-                app_log::append_log("INFO", "Xbox token exchanged via /launcher/login");
-                xbox_auth::persist_xbox_rps_success_state(
-                    &xbox_token,
-                    &variant_label,
-                    &candidate_token,
+                let verification_context = format!("{context} -> minecraft/profile");
+                if let Some((profile, matched_account, used_local_hint)) =
+                    xbox_auth::resolve_verified_minecraft_profile(
+                        &access_token,
+                        &verification_context,
+                        &launcher_accounts,
+                        &java_access_hints,
+                    )
+                    .await
+                {
+                    if !launch_auth_matches_selected_account(
+                        account.as_ref(),
+                        Some(&profile),
+                        matched_account.as_ref(),
+                    ) {
+                        app_log::append_log(
+                            "WARN",
+                            format!(
+                                "cached Xbox token resolved to another account; skipping source={} variant={}",
+                                xbox_token.source_path.display(),
+                                variant_label
+                            ),
+                        );
+                        std::thread::sleep(Duration::from_millis(180));
+                        continue;
+                    }
+                    app_log::append_log("INFO", "Xbox token exchanged via /launcher/login");
+                    xbox_auth::persist_xbox_rps_success_state(
+                        &xbox_token,
+                        &variant_label,
+                        &candidate_token,
+                    );
+                    resolved_auth = Some((
+                        access_token,
+                        profile,
+                        matched_account,
+                        if used_local_hint {
+                            "direct-xbox-cache-local".to_string()
+                        } else {
+                            "direct-xbox-cache".to_string()
+                        },
+                    ));
+                    break;
+                }
+
+                app_log::append_log(
+                    "WARN",
+                    format!(
+                        "cached Xbox token exchanged but Minecraft Java access could not be verified source={} variant={}",
+                        xbox_token.source_path.display(),
+                        variant_label
+                    ),
                 );
-                resolved_profile = xbox_auth::fetch_minecraft_profile_for_token(&access_token).await;
-                resolved_access_token = Some(access_token);
-                break;
             }
 
             std::thread::sleep(Duration::from_millis(180));
         }
-        if resolved_access_token.is_none() {
+        if resolved_auth.is_none() {
             app_log::append_log("WARN", "all cached Xbox token exchanges failed");
         }
-        resolved_access_token.map(|token| (token, resolved_profile))
+        resolved_auth
     } else {
         None
     };
 
-    let (access_token, verified_profile, mode) = if let Some(profile) = launcher_profile {
-        (
-            raw_access_token,
-            Some(profile),
-            "direct-account".to_string(),
-        )
-    } else if let Some((token, profile)) = xbox_profile {
-        (token, profile, "direct-xbox-cache".to_string())
-    } else {
-        ("0".to_string(), None, "direct-runtime".to_string())
-    };
+    let (access_token, verified_profile, resolved_account, mode) =
+        if let Some((token, profile, matched_account, mode)) = direct_account_auth {
+            (token, Some(profile), matched_account, mode)
+        } else if let Some((token, profile, matched_account, mode)) = xbox_profile {
+            (token, Some(profile), matched_account, mode)
+        } else if account.is_some() {
+            app_log::append_log(
+                "INFO",
+                "using selected launcher account as offline fallback",
+            );
+            (
+                "0".to_string(),
+                None,
+                account.clone(),
+                "direct-offline-selected".to_string(),
+            )
+        } else {
+            ("0".to_string(), None, None, "direct-runtime".to_string())
+        };
 
-    let client_id = account
-        .as_ref()
+    let metadata_account =
+        if mode.starts_with("direct-account") || mode == "direct-offline-selected" {
+            account.as_ref().or(resolved_account.as_ref())
+        } else {
+            resolved_account.as_ref()
+        };
+
+    let client_id = metadata_account
         .and_then(|account| account.local_id.clone())
-        .or_else(|| {
-            account
-                .as_ref()
-                .and_then(|account| account.client_token.clone())
-        })
+        .or_else(|| metadata_account.and_then(|account| account.client_token.clone()))
         .unwrap_or_else(|| "vanillalauncher".to_string());
-    let xuid = account
-        .as_ref()
+    let xuid = metadata_account
         .and_then(|account| account.xuid.clone())
         .unwrap_or_else(|| "0".to_string());
     let uuid = verified_profile
         .as_ref()
-        .map(|profile| xbox_auth::normalize_uuid_value(&profile.0))
+        .map(|profile| profile.0.clone())
         .or_else(|| {
-            account
-                .as_ref()
+            metadata_account
                 .and_then(|account| account.profile_id.clone())
                 .map(|value| xbox_auth::normalize_uuid_value(&value))
         })
+        .or_else(|| xbox_auth::uuid_from_access_token(&access_token))
         .or_else(|| {
-            account
-                .as_ref()
-                .and_then(|account| account.access_token.as_ref())
-                .and_then(|token| xbox_auth::uuid_from_access_token(token))
-        })
-        .or_else(|| {
-            account
-                .as_ref()
+            metadata_account
                 .and_then(|account| account.local_id.clone())
                 .map(|value| xbox_auth::normalize_uuid_value(&value))
         })
         .unwrap_or_else(|| "00000000000000000000000000000000".to_string());
 
-    if let Some(profile) = verified_profile.as_ref() {
-        if !profile.1.trim().is_empty() {
-            username = profile.1.clone();
-        }
-    }
-    let user_properties = account
+    let username = verified_profile
         .as_ref()
+        .map(|profile| profile.1.clone())
+        .or_else(|| {
+            metadata_account.and_then(crate::minecraft::preferred_launcher_account_display_name)
+        })
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "Player".to_string());
+    let user_properties = metadata_account
         .and_then(|account| account.user_properties.clone())
         .unwrap_or_else(|| "{}".to_string());
+
+    if mode == "direct-offline-selected" {
+        let offline_username = offline_username_for_account(metadata_account.or(account.as_ref()));
+        let offline_uuid = offline_uuid_for_username(&offline_username);
+        app_log::append_log(
+            "INFO",
+            format!(
+                "offline fallback identity username={} uuid={}",
+                offline_username, offline_uuid
+            ),
+        );
+        return Ok(VersionLaunchAuth {
+            username: offline_username,
+            uuid: offline_uuid,
+            access_token: "0".to_string(),
+            client_id,
+            xuid: "0".to_string(),
+            user_properties: "{}".to_string(),
+            user_type: "legacy".to_string(),
+            mode,
+        });
+    }
 
     Ok(VersionLaunchAuth {
         username,
@@ -388,8 +511,153 @@ pub(super) async fn resolve_launch_auth() -> Result<VersionLaunchAuth, String> {
         client_id,
         xuid,
         user_properties,
+        user_type: "msa".to_string(),
         mode,
     })
+}
+
+fn launch_auth_matches_selected_account(
+    selected_account: Option<&crate::minecraft::LauncherAccount>,
+    verified_profile: Option<&(String, String)>,
+    resolved_account: Option<&crate::minecraft::LauncherAccount>,
+) -> bool {
+    let Some(selected_account) = selected_account else {
+        return true;
+    };
+
+    if let Some(resolved_account) = resolved_account {
+        if launcher_accounts_share_identity(selected_account, resolved_account) {
+            return true;
+        }
+    }
+
+    let Some((profile_id, profile_name)) = verified_profile else {
+        return false;
+    };
+    let normalized_profile_id = xbox_auth::normalize_uuid_value(profile_id);
+    let normalized_profile_name = profile_name.trim();
+
+    selected_account
+        .profile_id
+        .as_deref()
+        .map(xbox_auth::normalize_uuid_value)
+        .is_some_and(|candidate| candidate == normalized_profile_id)
+        || selected_account
+            .gamer_tag
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|candidate| candidate.eq_ignore_ascii_case(normalized_profile_name))
+}
+
+fn launcher_accounts_share_identity(
+    left: &crate::minecraft::LauncherAccount,
+    right: &crate::minecraft::LauncherAccount,
+) -> bool {
+    let right_keys = launcher_account_identity_keys(right);
+    launcher_account_identity_keys(left)
+        .into_iter()
+        .any(|key| right_keys.contains(&key))
+}
+
+fn launcher_account_identity_keys(account: &crate::minecraft::LauncherAccount) -> Vec<String> {
+    let mut keys = Vec::new();
+
+    for value in [
+        account.local_id.as_deref(),
+        account.profile_id.as_deref(),
+        account.xuid.as_deref(),
+        account.username.as_deref(),
+        account.gamer_tag.as_deref(),
+    ] {
+        let Some(value) = value.map(str::trim).filter(|entry| !entry.is_empty()) else {
+            continue;
+        };
+        let normalized = if value.contains('-') && value.len() >= 32 {
+            xbox_auth::normalize_uuid_value(value)
+        } else {
+            value.to_ascii_lowercase()
+        };
+        if !keys.contains(&normalized) {
+            keys.push(normalized);
+        }
+    }
+
+    keys
+}
+
+fn offline_username_for_account(account: Option<&crate::minecraft::LauncherAccount>) -> String {
+    let fallback_local_id = account.and_then(|entry| entry.local_id.as_deref());
+    let preferred_name =
+        account.and_then(crate::minecraft::preferred_launcher_account_display_name);
+    let preferred_name_ref = preferred_name.as_deref();
+    let candidates = [preferred_name_ref, fallback_local_id];
+
+    for candidate in candidates.into_iter().flatten() {
+        let sanitized = sanitize_offline_username(candidate);
+        if !sanitized.is_empty() {
+            return sanitized;
+        }
+    }
+
+    let suffix = fallback_local_id
+        .map(|value| {
+            value
+                .chars()
+                .filter(|character| character.is_ascii_alphanumeric())
+                .take(6)
+                .collect::<String>()
+        })
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "0000".to_string());
+    sanitize_offline_username(&format!("Player{suffix}"))
+}
+
+fn sanitize_offline_username(value: &str) -> String {
+    let mut sanitized = String::new();
+    let mut last_was_separator = false;
+
+    for character in value.chars() {
+        if character.is_ascii_alphanumeric() || character == '_' {
+            sanitized.push(character);
+            last_was_separator = false;
+        } else if (character.is_ascii_whitespace() || character == '-' || character == '.')
+            && !sanitized.is_empty()
+            && !last_was_separator
+        {
+            sanitized.push('_');
+            last_was_separator = true;
+        }
+
+        if sanitized.len() >= 16 {
+            break;
+        }
+    }
+
+    while sanitized.ends_with('_') {
+        sanitized.pop();
+    }
+
+    if sanitized.len() >= 3 {
+        sanitized
+    } else {
+        let mut fallback = "Player".to_string();
+        if !sanitized.is_empty() {
+            fallback.push('_');
+            fallback.push_str(&sanitized);
+        }
+        fallback.chars().take(16).collect()
+    }
+}
+
+fn offline_uuid_for_username(username: &str) -> String {
+    let mut digest = md5::compute(format!("OfflinePlayer:{username}")).0;
+    digest[6] = (digest[6] & 0x0f) | 0x30;
+    digest[8] = (digest[8] & 0x3f) | 0x80;
+
+    digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
 }
 
 pub(super) fn fabric_client() -> Result<Client, String> {
@@ -680,4 +948,150 @@ pub(super) fn maven_library_path(coordinates: &str, classifier: Option<&str>) ->
         version,
         file_name
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        launch_auth_matches_selected_account, offline_username_for_account,
+        offline_uuid_for_username,
+    };
+    use crate::minecraft::LauncherAccount;
+
+    fn launcher_account(
+        local_id: &str,
+        username: &str,
+        gamer_tag: Option<&str>,
+        profile_id: Option<&str>,
+        xuid: Option<&str>,
+    ) -> LauncherAccount {
+        LauncherAccount {
+            username: Some(username.to_string()),
+            gamer_tag: gamer_tag.map(str::to_string),
+            profile_id: profile_id.map(str::to_string),
+            access_token: None,
+            access_token_expires_at: None,
+            client_token: None,
+            xuid: xuid.map(str::to_string),
+            local_id: Some(local_id.to_string()),
+            user_properties: None,
+            xbox_profile_verified: false,
+        }
+    }
+
+    #[test]
+    fn selected_account_accepts_matching_resolved_account() {
+        let selected = launcher_account(
+            "selected-local",
+            "kurann@example.com",
+            Some("Kurann PEX"),
+            Some("11112222333344445555666677778888"),
+            Some("42"),
+        );
+        let resolved = launcher_account(
+            "selected-local",
+            "kurann@example.com",
+            Some("Kurann PEX"),
+            Some("11112222333344445555666677778888"),
+            Some("42"),
+        );
+
+        assert!(launch_auth_matches_selected_account(
+            Some(&selected),
+            Some(&(
+                "11112222333344445555666677778888".to_string(),
+                "Kurann PEX".to_string()
+            )),
+            Some(&resolved),
+        ));
+    }
+
+    #[test]
+    fn selected_account_rejects_other_resolved_account() {
+        let selected = launcher_account(
+            "selected-local",
+            "kurann@example.com",
+            Some("Kurann PEX"),
+            Some("11112222333344445555666677778888"),
+            Some("42"),
+        );
+        let resolved = launcher_account(
+            "other-local",
+            "pexkoukunn@example.com",
+            Some("PEXkoukunn"),
+            Some("aaaaaaaa111122223333444455556666"),
+            Some("84"),
+        );
+
+        assert!(!launch_auth_matches_selected_account(
+            Some(&selected),
+            Some(&(
+                "aaaaaaaa111122223333444455556666".to_string(),
+                "PEXkoukunn".to_string()
+            )),
+            Some(&resolved),
+        ));
+    }
+
+    #[test]
+    fn selected_account_accepts_matching_verified_profile_without_resolved_account() {
+        let selected = launcher_account(
+            "selected-local",
+            "kurann@example.com",
+            Some("Kurann PEX"),
+            Some("11112222333344445555666677778888"),
+            None,
+        );
+
+        assert!(launch_auth_matches_selected_account(
+            Some(&selected),
+            Some(&(
+                "11112222-3333-4444-5555-666677778888".to_string(),
+                "Kurann PEX".to_string()
+            )),
+            None,
+        ));
+    }
+
+    #[test]
+    fn offline_username_prefers_email_local_part_when_java_profile_is_missing() {
+        let selected = launcher_account(
+            "selected-local",
+            "pexkurann@gmail.com",
+            Some("Kurann PEX"),
+            None,
+            None,
+        );
+
+        assert_eq!(
+            offline_username_for_account(Some(&selected)),
+            "PEXkurann".to_string()
+        );
+    }
+
+    #[test]
+    fn offline_username_uses_gamertag_when_verified_profile_exists() {
+        let selected = launcher_account(
+            "selected-local",
+            "pexkurann@gmail.com",
+            Some("PEXkoukunn"),
+            Some("11112222333344445555666677778888"),
+            None,
+        );
+
+        assert_eq!(
+            offline_username_for_account(Some(&selected)),
+            "PEXkoukunn".to_string()
+        );
+    }
+
+    #[test]
+    fn offline_uuid_is_deterministic_and_hex() {
+        let left = offline_uuid_for_username("Kurann_PEX");
+        let right = offline_uuid_for_username("Kurann_PEX");
+
+        assert_eq!(left, right);
+        assert_eq!(left.len(), 32);
+        assert!(left.chars().all(|character| character.is_ascii_hexdigit()));
+    }
 }

@@ -99,6 +99,8 @@ function App() {
   const [modRemoteStateCacheMap, setModRemoteStateCacheMap] =
     useState<Record<string, ModRemoteStateCacheEntry>>({});
   const modRemoteFetchTokenRef = useRef(0);
+  const loaderCatalogRequestTokenRef = useRef(0);
+  const lastLoaderCatalogErrorKeyRef = useRef<string | null>(null);
 
   const [activeLoader, setActiveLoader] = useState<LoaderId>("fabric");
   const [loaderCatalog, setLoaderCatalog] = useState<LoaderCatalog | null>(null);
@@ -130,6 +132,15 @@ function App() {
     snapshot?.profiles.find((profile) => profile.id === selectedProfileId) ??
     snapshot?.profiles[0] ??
     null;
+  const switchingAccountLocalId = busyAction?.startsWith("account-switch:")
+    ? busyAction.slice("account-switch:".length)
+    : null;
+  const accountScanOperationId = busyAction?.startsWith("account-scan:")
+    ? busyAction.slice("account-scan:".length)
+    : null;
+  const accountScanProgress = accountScanOperationId
+    ? progressItems.find((item) => item.operationId === accountScanOperationId) ?? null
+    : null;
   const selectedProfileModSignature =
     selectedProfile?.mods
       .map(
@@ -153,14 +164,20 @@ function App() {
   );
 
   function pushNotice(tone: Notice["tone"], text: string) {
-    setNotices((current) => [
-      ...current.slice(-3),
-      {
-        id: createNoticeId(),
-        tone,
-        text,
-      },
-    ]);
+    setNotices((current) => {
+      if (current.some((notice) => notice.tone === tone && notice.text === text)) {
+        return current;
+      }
+
+      return [
+        ...current.slice(-3),
+        {
+          id: createNoticeId(),
+          tone,
+          text,
+        },
+      ];
+    });
   }
 
   const dismissNotice = useCallback((noticeId: string) => {
@@ -204,18 +221,18 @@ function App() {
         if (stateResult.refreshed) {
           pushNotice(
             "success",
-            `Xbox 認証状態を更新しました。試行 ${tried}/${total} で起動準備が完了しました。`,
+            `${stateResult.message} 試行 ${tried}/${total} で起動準備が完了しました。`,
           );
         } else {
           pushNotice(
             "info",
-            `保存済みの Xbox 認証状態を利用して起動します。試行 ${tried}/${total}。`,
+            `${stateResult.message} 試行 ${tried}/${total}。`,
           );
         }
       } else {
         pushNotice(
           "info",
-          `Xbox 認証状態の更新が未完了のため、既存情報で起動を試みます。試行 ${tried}/${total}。`,
+          `${stateResult.message} 既存情報でも起動できない場合は、Minecraft Java 版を利用できるアカウントで公式 Launcher にログインしてください。試行 ${tried}/${total}。`,
         );
       }
 
@@ -563,10 +580,17 @@ function App() {
   }
 
   async function loadLoaderCatalog(loader: LoaderId, preferredGameVersion?: string) {
+    const requestToken = loaderCatalogRequestTokenRef.current + 1;
+    loaderCatalogRequestTokenRef.current = requestToken;
     setLoadingLoaderCatalog(true);
 
     try {
       const catalog = await launcherApi.getLoaderCatalog(loader, preferredGameVersion ?? null);
+      if (loaderCatalogRequestTokenRef.current !== requestToken) {
+        return;
+      }
+
+      lastLoaderCatalogErrorKeyRef.current = null;
       setLoaderCatalog(catalog);
       setSelectedLoaderGameVersion(catalog.minecraftVersion);
       setSelectedLoaderVersion((currentValue) => {
@@ -580,15 +604,24 @@ function App() {
         return catalog.recommendedLoader.id;
       });
     } catch (error) {
-      pushNotice(
-        "error",
-        errorMessage(
-          error,
-          `${loaderGuides.find((guide) => guide.id === loader)?.name ?? "Loader"} の導入情報を取得できませんでした。`,
-        ),
+      if (loaderCatalogRequestTokenRef.current !== requestToken) {
+        return;
+      }
+
+      const message = errorMessage(
+        error,
+        `${loaderGuides.find((guide) => guide.id === loader)?.name ?? "Loader"} の導入情報を取得できませんでした。`,
       );
+      const errorKey = `${loader}:${preferredGameVersion ?? "latest"}:${message}`;
+
+      if (lastLoaderCatalogErrorKeyRef.current !== errorKey) {
+        lastLoaderCatalogErrorKeyRef.current = errorKey;
+        pushNotice("error", message);
+      }
     } finally {
-      setLoadingLoaderCatalog(false);
+      if (loaderCatalogRequestTokenRef.current === requestToken) {
+        setLoadingLoaderCatalog(false);
+      }
     }
   }
 
@@ -1004,6 +1037,57 @@ function App() {
     } catch (error) {
       pushNotice("error", errorMessage(error, "公式 Launcher を起動できませんでした。"));
     } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function handleSelectLauncherAccount(localId: string) {
+    const target = snapshot?.launcherAccounts.find((account) => account.localId === localId);
+    if (!target) {
+      return false;
+    }
+
+    if (target.isActive) {
+      return true;
+    }
+
+    setBusyAction(`account-switch:${localId}`);
+
+    try {
+      const result = await launcherApi.setActiveLauncherAccount(localId);
+      pushNotice(
+        "success",
+        target.hasJavaAccess
+          ? result.message
+          : `${result.message} このアカウントは Java 版ライセンス未確認のため、直接起動できない場合があります。`,
+      );
+      await refreshLauncher();
+      return true;
+    } catch (error) {
+      pushNotice("error", errorMessage(error, "Launcher アカウントを切り替えられませんでした。"));
+      return false;
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function handleScanLauncherAccounts() {
+    const operationId = createOperationId("account-scan");
+    setBusyAction(`account-scan:${operationId}`);
+    upsertProgress({
+      operationId,
+      title: "Launcher アカウント再検出",
+      detail: "Launcher 保存先の確認を始めています。",
+      percent: 2,
+    });
+
+    try {
+      await launcherApi.scanLauncherAccounts(operationId);
+      await refreshLauncher();
+    } catch (error) {
+      pushNotice("error", errorMessage(error, "Launcher アカウントの再検出に失敗しました。"));
+    } finally {
+      scheduleProgressClear(operationId);
       setBusyAction(null);
     }
   }
@@ -1470,11 +1554,17 @@ function App() {
         <HeroPanel
           profile={selectedProfile}
           activeAccount={snapshot?.activeAccount ?? null}
+          launcherAccounts={snapshot?.launcherAccounts ?? []}
           launcherAvailable={snapshot?.launcherAvailable ?? false}
           busy={launchBusy || busyAction === "delete-profile"}
           openingLauncher={busyAction === "launcher"}
+          switchingAccountLocalId={switchingAccountLocalId}
+          scanningAccounts={busyAction?.startsWith("account-scan:") ?? false}
+          scanProgress={accountScanProgress}
           onLaunch={() => void handleLaunchProfile()}
           onOpenOfficialLauncher={() => void handleOpenOfficialLauncher()}
+          onSelectLauncherAccount={(localId) => handleSelectLauncherAccount(localId)}
+          onScanLauncherAccounts={() => void handleScanLauncherAccounts()}
           onOpenGameDir={() => void openSelectedPath("game")}
           onOpenModsDir={() => void openSelectedPath("mods")}
           onEditProfileName={handleOpenProfileNameDialog}

@@ -15,7 +15,28 @@ use settings::{AppSettings, DebugExportResult, PerformanceLiteMode, SoftwareStat
 
 #[tauri::command]
 fn get_launcher_state() -> Result<LauncherSnapshot, String> {
-    minecraft::load_launcher_snapshot()
+    let mut snapshot = minecraft::load_launcher_snapshot()?;
+    let launcher_accounts = loaders::get_launcher_accounts()?;
+
+    if let Some(active_account) = snapshot.active_account.as_mut() {
+        if let Some(selected_account) = launcher_accounts
+            .iter()
+            .find(|entry| entry.local_id == active_account.local_id)
+        {
+            active_account.username = selected_account.username.clone();
+            active_account.has_java_access = selected_account.has_java_access;
+        }
+    } else if let Some(selected_account) = launcher_accounts.iter().find(|entry| entry.is_active) {
+        snapshot.active_account = Some(models::ActiveLauncherAccount {
+            local_id: selected_account.local_id.clone(),
+            username: selected_account.username.clone(),
+            auth_source: selected_account.auth_source.clone(),
+            has_java_access: selected_account.has_java_access,
+        });
+    }
+
+    snapshot.launcher_accounts = launcher_accounts;
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -161,6 +182,19 @@ fn update_profile_name(profile_id: String, profile_name: String) -> Result<Actio
         message: "起動構成名を更新しました。".to_string(),
         file_name: profile_id,
     })
+}
+
+#[tauri::command]
+fn set_active_launcher_account(local_id: String) -> Result<ActionResult, String> {
+    loaders::set_active_launcher_account(local_id)
+}
+
+#[tauri::command]
+async fn scan_launcher_accounts(
+    app: tauri::AppHandle,
+    operation_id: Option<String>,
+) -> Result<ActionResult, String> {
+    loaders::scan_launcher_accounts(Some(&app), operation_id.as_deref()).await
 }
 
 #[tauri::command]
@@ -340,6 +374,8 @@ pub fn run() {
             delete_profile,
             update_profile_visuals,
             update_profile_name,
+            set_active_launcher_account,
+            scan_launcher_accounts,
             uninstall_modrinth_project,
             set_mod_enabled,
             remove_mod,

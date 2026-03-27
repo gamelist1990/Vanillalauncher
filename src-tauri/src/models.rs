@@ -6,6 +6,7 @@ pub struct LauncherSnapshot {
     pub minecraft_root: String,
     pub launcher_available: bool,
     pub active_account: Option<ActiveLauncherAccount>,
+    pub launcher_accounts: Vec<LauncherAccountEntry>,
     pub profiles: Vec<LauncherProfile>,
     pub summary: LauncherSummary,
 }
@@ -13,8 +14,23 @@ pub struct LauncherSnapshot {
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ActiveLauncherAccount {
+    pub local_id: String,
     pub username: String,
     pub auth_source: String,
+    pub has_java_access: bool,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct LauncherAccountEntry {
+    pub local_id: String,
+    pub username: String,
+    pub gamer_tag: Option<String>,
+    pub microsoft_username: Option<String>,
+    pub auth_source: String,
+    pub has_java_access: bool,
+    pub is_active: bool,
+    pub is_selectable: bool,
 }
 
 #[derive(Debug, Serialize, Clone)]

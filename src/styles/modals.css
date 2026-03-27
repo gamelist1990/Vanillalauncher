@@ -179,3 +179,364 @@
   background: rgba(232, 246, 236, 0.88);
   box-shadow: inset 0 0 0 1px rgba(56, 132, 84, 0.12);
 }
+
+.launcher-account-sheet {
+  max-height: min(88vh, 860px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  gap: 18px;
+}
+
+.launcher-account-sheet::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.launcher-account-scan-status {
+  padding: 15px 16px;
+  display: grid;
+  gap: 12px;
+  border-radius: 18px;
+  border: 1px solid rgba(59, 127, 213, 0.2);
+  background: linear-gradient(180deg, rgba(240, 247, 255, 0.96), rgba(233, 244, 255, 0.9));
+  overflow: hidden;
+  position: relative;
+}
+
+.launcher-account-scan-status::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 42%;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0));
+  transform: translateX(-120%);
+  animation: launcher-scan-sheen 2.6s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.launcher-account-scan-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.launcher-account-scan-status strong {
+  color: #214d83;
+  font-size: 0.98rem;
+}
+
+.launcher-account-scan-status span {
+  color: #4f6a86;
+  line-height: 1.55;
+}
+
+.launcher-account-scan-progress {
+  display: grid;
+  gap: 8px;
+}
+
+.launcher-account-scan-progress.is-determinate {
+  gap: 10px;
+}
+
+.launcher-account-scan-progress-track {
+  position: relative;
+  display: block;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  border: 1px solid rgba(88, 138, 205, 0.18);
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0.16)),
+    rgba(198, 221, 247, 0.62);
+  box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.46);
+}
+
+.launcher-account-scan-progress-bar {
+  position: absolute;
+  inset: 1px auto 1px 1px;
+  width: 34%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #2c73c2, #63a0ea 62%, #b6dcff);
+  box-shadow:
+    0 0 0 1px rgba(88, 138, 205, 0.12),
+    0 6px 16px rgba(65, 118, 186, 0.22);
+  animation: launcher-scan-progress 1.6s cubic-bezier(0.42, 0, 0.24, 1) infinite;
+}
+
+.launcher-account-scan-progress.is-determinate .launcher-account-scan-progress-bar {
+  width: 0;
+  min-width: 36px;
+  animation: none;
+  transition: width 220ms ease;
+}
+
+.launcher-account-scan-progress-meta {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.launcher-account-scan-progress-note {
+  color: #5b7590;
+  flex: 1 1 auto;
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.launcher-account-scan-progress-value {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(88, 138, 205, 0.18);
+  background: rgba(255, 255, 255, 0.56);
+  color: #2b5f9e;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.launcher-account-overview {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.launcher-account-overview article {
+  min-width: 0;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(125, 146, 174, 0.18);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.launcher-account-overview span {
+  display: block;
+  color: var(--copy-dim);
+  font-size: 0.74rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.launcher-account-overview strong {
+  display: block;
+  margin-top: 8px;
+  color: #1d3147;
+  font-size: 1.12rem;
+}
+
+.launcher-account-list {
+  display: grid;
+  gap: 10px;
+}
+
+.launcher-account-overview.is-scanning,
+.launcher-account-list.is-scanning {
+  opacity: 0.72;
+}
+
+.launcher-account-row {
+  width: 100%;
+  padding: 18px 20px;
+  display: block;
+  text-align: left;
+  border-radius: 18px;
+  border: 1px solid rgba(125, 146, 174, 0.18);
+  background: rgba(255, 255, 255, 0.9);
+  color: #1f2e42;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    transform 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.launcher-account-row.is-selectable {
+  cursor: pointer;
+}
+
+.launcher-account-row.is-selectable:hover {
+  border-color: rgba(56, 132, 84, 0.32);
+  background: rgba(248, 252, 248, 0.96);
+  transform: translateY(-1px);
+}
+
+.launcher-account-row.is-active {
+  border-color: rgba(56, 132, 84, 0.36);
+  background: rgba(232, 246, 236, 0.88);
+  box-shadow: inset 0 0 0 1px rgba(56, 132, 84, 0.1);
+}
+
+.launcher-account-row.is-detected-only {
+  border-style: dashed;
+  background: linear-gradient(180deg, rgba(252, 253, 255, 0.94), rgba(245, 249, 255, 0.9));
+}
+
+.launcher-account-row:disabled {
+  cursor: default;
+  transform: none;
+}
+
+@keyframes launcher-scan-progress {
+  0% {
+    transform: translateX(-120%);
+  }
+
+  55% {
+    transform: translateX(145%);
+  }
+
+  100% {
+    transform: translateX(145%);
+  }
+}
+
+@keyframes launcher-scan-sheen {
+  0% {
+    transform: translateX(-120%);
+  }
+
+  100% {
+    transform: translateX(240%);
+  }
+}
+
+.launcher-account-row-copy {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.launcher-account-row-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.launcher-account-name {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #173021;
+  font-size: 1.02rem;
+  line-height: 1.24;
+}
+
+.launcher-account-row-copy > span {
+  color: var(--copy);
+  line-height: 1.45;
+}
+
+.launcher-account-inline-check {
+  width: 17px;
+  height: 17px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 999px;
+  border: 1px solid rgba(56, 132, 84, 0.42);
+  background: rgba(232, 246, 236, 0.96);
+  color: #1b6c3a;
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.launcher-account-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.launcher-account-tag {
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(125, 146, 174, 0.2);
+  background: rgba(248, 251, 255, 0.92);
+  color: #5a6d84;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.launcher-account-row-action {
+  color: #1c6e3c;
+  font-size: 0.84rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.launcher-account-row-action.is-active {
+  color: #1c6e3c;
+}
+
+.launcher-account-row-action.is-muted {
+  color: #6c7c91;
+}
+
+.launcher-account-tag.is-launcher {
+  border-color: rgba(59, 127, 213, 0.22);
+  background: rgba(232, 241, 255, 0.92);
+  color: #25548f;
+}
+
+.launcher-account-tag.is-detected {
+  border-color: rgba(125, 146, 174, 0.2);
+  background: rgba(246, 249, 253, 0.96);
+  color: #5f7187;
+}
+
+.launcher-account-tag.is-owned {
+  border-color: rgba(56, 132, 84, 0.34);
+  background: rgba(232, 246, 236, 0.94);
+  color: #1b6c3a;
+}
+
+.launcher-account-tag.is-neutral {
+  border-color: rgba(202, 172, 96, 0.24);
+  background: rgba(252, 245, 231, 0.94);
+  color: #7b5d1f;
+}
+
+.launcher-account-row-note {
+  color: var(--copy-dim);
+  font-size: 0.8rem;
+  line-height: 1.55;
+}
+
+.launcher-account-empty {
+  padding: 18px 20px;
+  display: grid;
+  gap: 6px;
+  border-radius: 18px;
+  border: 1px dashed rgba(125, 146, 174, 0.34);
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.launcher-account-empty span {
+  color: var(--copy);
+  line-height: 1.55;
+}
+
+@media (max-width: 720px) {
+  .launcher-account-overview {
+    grid-template-columns: 1fr;
+  }
+
+  .launcher-account-row-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .launcher-account-row-action {
+    white-space: normal;
+  }
+
+  .launcher-account-scan-progress-meta {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

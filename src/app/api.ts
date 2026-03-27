@@ -98,6 +98,12 @@ export const launcherApi = {
       profileId,
       profileName,
     }),
+  setActiveLauncherAccount: (localId: string) =>
+    invoke<ActionResult>("set_active_launcher_account", {
+      localId,
+    }),
+  scanLauncherAccounts: (operationId?: string) =>
+    invoke<ActionResult>("scan_launcher_accounts", { operationId }),
   uninstallProject: (profileId: string, projectId: string) =>
     invoke<ActionResult>("uninstall_modrinth_project", { profileId, projectId }),
   setModEnabled: (profileId: string, fileName: string, enabled: boolean) =>

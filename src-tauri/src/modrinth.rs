@@ -4,9 +4,9 @@ use crate::{
         find_profile, is_mod_archive, minecraft_root, normalize_loader,
         remove_tracked_project_by_file, remove_tracked_project_by_project,
         rename_tracked_project_file, resolve_profile_mods_dir, track_installed_project,
-        track_installed_project_with_source, tracked_project_entries, TrackedModProject,
+        track_installed_project_with_source, tracked_project_entries,
         update_profile_runtime_and_modpack, upsert_custom_profile, validate_file_name,
-        CustomProfileDraft, TrackedModSource,
+        CustomProfileDraft, TrackedModProject, TrackedModSource,
     },
     models::{
         ActionResult, InstallResult, ModRemoteState, ModpackExportResult, ModpackInstallResult,
@@ -25,7 +25,10 @@ use std::{
     hash::{Hash, Hasher},
     io::{Read, Write},
     path::{Component, Path, PathBuf},
-    sync::OnceLock,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, OnceLock,
+    },
     time::Duration,
 };
 use tauri::AppHandle;
@@ -275,13 +278,8 @@ pub async fn install_modrinth_project(
     operation_id: Option<String>,
 ) -> Result<InstallResult, String> {
     if let Some(curseforge_project_id) = parse_curseforge_project_id(&project_id) {
-        return install_curseforge_project(
-            app,
-            profile_id,
-            curseforge_project_id,
-            operation_id,
-        )
-        .await;
+        return install_curseforge_project(app, profile_id, curseforge_project_id, operation_id)
+            .await;
     }
 
     let operation_id = operation_id.unwrap_or_else(|| format!("modrinth-install-{project_id}"));
@@ -439,7 +437,11 @@ pub async fn get_profile_mod_remote_state(
         .into_iter()
         .map(|entry| (entry.file_name.clone(), entry))
         .collect::<HashMap<_, _>>();
-    let Some(mod_file) = profile.mods.iter().find(|mod_file| mod_file.file_name == file_name) else {
+    let Some(mod_file) = profile
+        .mods
+        .iter()
+        .find(|mod_file| mod_file.file_name == file_name)
+    else {
         return Ok(None);
     };
     let Some(tracked_entry) = tracked_entries.get(&mod_file.file_name) else {
@@ -458,7 +460,11 @@ pub async fn get_profile_mod_visual_state(
         .into_iter()
         .map(|entry| (entry.file_name.clone(), entry))
         .collect::<HashMap<_, _>>();
-    let Some(mod_file) = profile.mods.iter().find(|mod_file| mod_file.file_name == file_name) else {
+    let Some(mod_file) = profile
+        .mods
+        .iter()
+        .find(|mod_file| mod_file.file_name == file_name)
+    else {
         return Ok(None);
     };
     let Some(tracked_entry) = tracked_entries.get(&mod_file.file_name) else {
@@ -518,7 +524,9 @@ async fn build_mod_visual_state(
         .strip_prefix("modrinth:")
         .unwrap_or(&source_project_id)
         .to_string();
-    let project = fetch_project_details(client, &modrinth_project_id).await.ok();
+    let project = fetch_project_details(client, &modrinth_project_id)
+        .await
+        .ok();
 
     Ok(Some(ModRemoteState {
         file_name: mod_file.file_name.clone(),
@@ -564,9 +572,10 @@ async fn build_mod_remote_state(
         .curseforge_project_id
         .or_else(|| parse_curseforge_project_id(&source_project_id))
     {
-        let release = fetch_latest_curseforge_file(client, curseforge_project_id, loader, game_version)
-            .await
-            .ok();
+        let release =
+            fetch_latest_curseforge_file(client, curseforge_project_id, loader, game_version)
+                .await
+                .ok();
         let latest_file_name = release.as_ref().map(|file| file.file_name.clone());
         let latest_version = release.as_ref().map(|file| file.display_name.clone());
         let published_at = release.as_ref().and_then(|file| file.date_created.clone());
@@ -992,6 +1001,78 @@ async fn update_curseforge_project(
     })
 }
 
+fn loader_label(loader: &str) -> &'static str {
+    match normalize_loader(Some(loader)) {
+        "fabric" => "Fabric",
+        "quilt" => "Quilt",
+        "forge" => "Forge",
+        "neoforge" => "NeoForge",
+        "vanilla" => "Vanilla",
+        _ => "Loader",
+    }
+}
+
+async fn ensure_loader_with_progress(
+    app: &AppHandle,
+    operation_id: &str,
+    title: &str,
+    loader: &str,
+    minecraft_version: &str,
+    loader_version: Option<&str>,
+    start_percent: f64,
+    max_wait_percent: f64,
+) -> Result<(String, String), String> {
+    let label = loader_label(loader);
+    emit_progress(
+        app,
+        operation_id,
+        title,
+        format!(
+            "{} / {} の起動環境を確認しています。必要なランタイムのダウンロードとセットアップを行う場合があります。",
+            label, minecraft_version
+        ),
+        start_percent,
+    );
+
+    let done = Arc::new(AtomicBool::new(false));
+    let done_for_worker = Arc::clone(&done);
+    let app_handle = app.clone();
+    let operation_id_owned = operation_id.to_string();
+    let title_owned = title.to_string();
+    let label_owned = label.to_string();
+    let minecraft_version_owned = minecraft_version.to_string();
+    std::thread::spawn(move || {
+        let started = std::time::Instant::now();
+        let mut wait_percent = (start_percent + 2.0).min(max_wait_percent);
+        while !done_for_worker.load(Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_secs(8));
+            if done_for_worker.load(Ordering::Relaxed) {
+                break;
+            }
+            let elapsed_seconds = started.elapsed().as_secs();
+            emit_progress(
+                &app_handle,
+                &operation_id_owned,
+                &title_owned,
+                format!(
+                    "{} / {} の起動環境を準備中です。必要なファイルをダウンロードして展開しています（{} 秒経過）。初回は数分かかることがあります。",
+                    label_owned,
+                    minecraft_version_owned,
+                    elapsed_seconds
+                ),
+                wait_percent,
+            );
+            if wait_percent < max_wait_percent {
+                wait_percent = (wait_percent + 2.0).min(max_wait_percent);
+            }
+        }
+    });
+
+    let result = ensure_loader_version_installed(loader, minecraft_version, loader_version).await;
+    done.store(true, Ordering::Relaxed);
+    result
+}
+
 pub async fn install_modrinth_modpack(
     app: &AppHandle,
     project_id: String,
@@ -1036,24 +1117,17 @@ pub async fn install_modrinth_modpack(
     let pack = read_modpack_index(&pack_bytes)?;
     let (loader, minecraft_version, loader_version) = resolve_modpack_dependencies(&pack)?;
 
-    emit_progress(
+    let (version_id, _) = ensure_loader_with_progress(
         app,
         &operation_id,
         "Modpack を準備中",
-        format!(
-            "{} / {} の起動環境を準備しています。",
-            if loader == "vanilla" {
-                "Vanilla".to_string()
-            } else {
-                loader.to_string()
-            },
-            minecraft_version
-        ),
+        &loader,
+        &minecraft_version,
+        loader_version.as_deref(),
         26.0,
-    );
-    let (version_id, _) =
-        ensure_loader_version_installed(&loader, &minecraft_version, loader_version.as_deref())
-            .await?;
+        44.0,
+    )
+    .await?;
 
     let game_dir = modpack_instance_dir(&root, &loader, &project.title);
     fs::create_dir_all(&game_dir)
@@ -1170,19 +1244,17 @@ pub async fn update_modrinth_modpack_profile(
     let pack = read_modpack_index(&pack_bytes)?;
     let (loader, minecraft_version, loader_version) = resolve_modpack_dependencies(&pack)?;
 
-    emit_progress(
+    let (version_id, _) = ensure_loader_with_progress(
         app,
         &operation_id,
         "Modpack を更新中",
-        format!(
-            "{} / {} のランタイムを更新しています。",
-            loader, minecraft_version
-        ),
+        &loader,
+        &minecraft_version,
+        loader_version.as_deref(),
         28.0,
-    );
-    let (version_id, _) =
-        ensure_loader_version_installed(&loader, &minecraft_version, loader_version.as_deref())
-            .await?;
+        48.0,
+    )
+    .await?;
 
     emit_progress(
         app,
@@ -1251,16 +1323,17 @@ pub async fn import_local_modpack(
     let curseforge_manifest = read_curseforge_manifest(&pack_bytes).ok();
     let (loader, minecraft_version, loader_version) = resolve_modpack_dependencies(&pack)?;
 
-    emit_progress(
+    let (version_id, _) = ensure_loader_with_progress(
         app,
         &operation_id,
         "Modpack を取り込み中",
-        "必要な起動環境を確認しています。",
+        &loader,
+        &minecraft_version,
+        loader_version.as_deref(),
         24.0,
-    );
-    let (version_id, _) =
-        ensure_loader_version_installed(&loader, &minecraft_version, loader_version.as_deref())
-            .await?;
+        44.0,
+    )
+    .await?;
 
     let root = minecraft_root()?;
     let fallback_name = source_path
@@ -1319,9 +1392,15 @@ pub async fn import_local_modpack(
     );
 
     let import_message = if curseforge_manifest.is_some() {
-        format!("{} を CurseForge 互換アーカイブとして取り込みました。", requested_name)
+        format!(
+            "{} を CurseForge 互換アーカイブとして取り込みました。",
+            requested_name
+        )
     } else {
-        format!("{} をローカル Modpack アーカイブから取り込みました。", requested_name)
+        format!(
+            "{} をローカル Modpack アーカイブから取り込みました。",
+            requested_name
+        )
     };
 
     Ok(ModpackInstallResult {
@@ -1478,7 +1557,10 @@ pub fn export_profile_modpack(
             add_overrides_entry_to_zip(&mut zip, &game_dir, Path::new("shaderpacks"))?;
             add_overrides_entry_to_zip(&mut zip, &game_dir, Path::new("options.txt"))?;
             add_overrides_entry_to_zip(&mut zip, &game_dir, Path::new("optionsof.txt"))?;
-            format!("{} を CurseForge 互換 zip でエクスポートしました。", profile.name)
+            format!(
+                "{} を CurseForge 互換 zip でエクスポートしました。",
+                profile.name
+            )
         }
         "modrinth" => {
             let mut dependencies = HashMap::new();
@@ -1517,7 +1599,10 @@ pub fn export_profile_modpack(
             add_overrides_entry_to_zip(&mut zip, &game_dir, Path::new("shaderpacks"))?;
             add_overrides_entry_to_zip(&mut zip, &game_dir, Path::new("options.txt"))?;
             add_overrides_entry_to_zip(&mut zip, &game_dir, Path::new("optionsof.txt"))?;
-            format!("{} を Modrinth 互換 mrpack でエクスポートしました。", profile.name)
+            format!(
+                "{} を Modrinth 互換 mrpack でエクスポートしました。",
+                profile.name
+            )
         }
         _ => unreachable!(),
     };
@@ -1836,7 +1921,8 @@ fn read_modpack_index(bytes: &[u8]) -> Result<ModpackIndex, String> {
     let cursor = std::io::Cursor::new(bytes);
     let mut archive = ZipArchive::new(cursor)
         .map_err(|error| format!("Modpack アーカイブを開けませんでした: {error}"))?;
-    if let Some(entry_index) = find_zip_entry_index_by_file_name(&mut archive, "modrinth.index.json")?
+    if let Some(entry_index) =
+        find_zip_entry_index_by_file_name(&mut archive, "modrinth.index.json")?
     {
         let mut entry = archive
             .by_index(entry_index)
@@ -1873,7 +1959,8 @@ fn read_curseforge_manifest(bytes: &[u8]) -> Result<CurseforgeManifest, String> 
     let cursor = std::io::Cursor::new(bytes);
     let mut archive = ZipArchive::new(cursor)
         .map_err(|error| format!("Modpack アーカイブを開けませんでした: {error}"))?;
-    let Some(entry_index) = find_zip_entry_index_by_file_name(&mut archive, "manifest.json")? else {
+    let Some(entry_index) = find_zip_entry_index_by_file_name(&mut archive, "manifest.json")?
+    else {
         return Err("manifest.json がありません。".to_string());
     };
     let mut entry = archive
@@ -1896,11 +1983,7 @@ fn find_zip_entry_index_by_file_name<R: std::io::Read + std::io::Seek>(
             .by_index(index)
             .map_err(|error| format!("アーカイブ内ファイルを読み取れませんでした: {error}"))?;
         let normalized = entry.name().replace('\\', "/");
-        let current = normalized
-            .rsplit('/')
-            .next()
-            .unwrap_or_default()
-            .trim();
+        let current = normalized.rsplit('/').next().unwrap_or_default().trim();
         if current.eq_ignore_ascii_case(file_name) {
             return Ok(Some(index));
         }
@@ -1946,7 +2029,9 @@ fn map_curseforge_manifest_to_modpack_index(manifest: CurseforgeManifest) -> Mod
         summary: Some("CurseForge 形式の Modpack を取り込みました。".to_string()),
         files,
         dependencies,
-        override_prefixes: vec![manifest.overrides.unwrap_or_else(|| "overrides".to_string())],
+        override_prefixes: vec![manifest
+            .overrides
+            .unwrap_or_else(|| "overrides".to_string())],
     }
 }
 
@@ -2098,22 +2183,39 @@ async fn install_curseforge_manifest_files(
             percent,
         );
 
-        let metadata = fetch_curseforge_file_metadata(client, file.project_id, file.file_id).await?;
+        let metadata =
+            fetch_curseforge_file_metadata(client, file.project_id, file.file_id).await?;
         let download_url = build_curseforge_download_url(file.file_id, &metadata.file_name)?;
         let target_path = mods_dir.join(&metadata.file_name);
         let bytes = client
             .get(&download_url)
             .send()
             .await
-            .map_err(|error| format!("{} をダウンロードできませんでした: {error}", metadata.file_name))?
+            .map_err(|error| {
+                format!(
+                    "{} をダウンロードできませんでした: {error}",
+                    metadata.file_name
+                )
+            })?
             .error_for_status()
-            .map_err(|error| format!("{} のダウンロードに失敗しました: {error}", metadata.file_name))?
+            .map_err(|error| {
+                format!(
+                    "{} のダウンロードに失敗しました: {error}",
+                    metadata.file_name
+                )
+            })?
             .bytes()
             .await
-            .map_err(|error| format!("{} の内容を読み取れませんでした: {error}", metadata.file_name))?;
+            .map_err(|error| {
+                format!(
+                    "{} の内容を読み取れませんでした: {error}",
+                    metadata.file_name
+                )
+            })?;
 
-        fs::write(&target_path, &bytes)
-            .map_err(|error| format!("{} を保存できませんでした: {error}", target_path.display()))?;
+        fs::write(&target_path, &bytes).map_err(|error| {
+            format!("{} を保存できませんでした: {error}", target_path.display())
+        })?;
         installed.insert((file.project_id, file.file_id), metadata.file_name);
     }
 
@@ -2452,7 +2554,8 @@ async fn fetch_latest_curseforge_file(
         .into_iter()
         .find(|file| {
             curseforge_file_matches_loader(file, loader)
-                && game_version.is_none_or(|version| curseforge_file_matches_game_version(file, version))
+                && game_version
+                    .is_none_or(|version| curseforge_file_matches_game_version(file, version))
         })
         .ok_or_else(|| "CurseForge に互換ファイルが見つかりませんでした。".to_string())
 }
@@ -2793,13 +2896,9 @@ fn parse_curseforge_search_hit(hit: &Value) -> Option<ModrinthProject> {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let icon_url = hit
-        .get("logo")
-        .and_then(Value::as_object)
-        .and_then(|logo| {
-            value_to_string(logo.get("thumbnailUrl"))
-                .or_else(|| value_to_string(logo.get("url")))
-        });
+    let icon_url = hit.get("logo").and_then(Value::as_object).and_then(|logo| {
+        value_to_string(logo.get("thumbnailUrl")).or_else(|| value_to_string(logo.get("url")))
+    });
     let project_url = hit
         .get("links")
         .and_then(Value::as_object)

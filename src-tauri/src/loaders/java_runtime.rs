@@ -10,6 +10,15 @@ use zip::ZipArchive;
 const JAVA_RUNTIME_DOWNLOAD_URL: &str =
     "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse?project=jdk";
 
+fn suppress_console_window(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW
+        command.creation_flags(0x08000000);
+    }
+}
+
 pub(super) fn find_game_java_executable() -> Result<PathBuf, String> {
     if cfg!(target_os = "windows") {
         let java = ensure_managed_java_runtime(None)?;
@@ -95,7 +104,10 @@ fn discover_java_executable() -> Option<PathBuf> {
     }
 
     if cfg!(target_os = "windows") {
-        let output = Command::new("where").arg("java").output().ok()?;
+        let mut command = Command::new("where");
+        command.arg("java");
+        suppress_console_window(&mut command);
+        let output = command.output().ok()?;
 
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -123,7 +135,10 @@ fn discover_java_executable() -> Option<PathBuf> {
     } else {
         PathBuf::from("java")
     };
-    let probe = Command::new(&fallback).arg("-version").output().ok()?;
+    let mut probe_command = Command::new(&fallback);
+    probe_command.arg("-version");
+    suppress_console_window(&mut probe_command);
+    let probe = probe_command.output().ok()?;
 
     if probe.status.success() || !probe.stderr.is_empty() {
         Some(fallback)
@@ -218,11 +233,14 @@ fn download_java_runtime_archive(target_path: &Path) -> Result<(), String> {
         url = JAVA_RUNTIME_DOWNLOAD_URL,
         out = escaped_output
     );
-    let output = Command::new("powershell")
+    let mut command = Command::new("powershell");
+    command
         .arg("-NoProfile")
         .arg("-NonInteractive")
         .arg("-Command")
-        .arg(script)
+        .arg(script);
+    suppress_console_window(&mut command);
+    let output = command
         .output()
         .map_err(|error| format!("Java をダウンロードできませんでした: {error}"))?;
 

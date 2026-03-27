@@ -6,7 +6,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet, VecDeque},
     env,
     ffi::OsStr,
     fs::{self, File},
@@ -64,7 +64,7 @@ pub struct TrackedModSource {
     pub curseforge_file_id: Option<u64>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LauncherAccount {
     pub username: Option<String>,
     pub gamer_tag: Option<String>,
@@ -75,6 +75,145 @@ pub struct LauncherAccount {
     pub xuid: Option<String>,
     pub local_id: Option<String>,
     pub user_properties: Option<String>,
+    #[serde(default)]
+    pub xbox_profile_verified: bool,
+}
+
+pub fn preferred_launcher_account_display_name(account: &LauncherAccount) -> Option<String> {
+    if launcher_account_has_verified_profile(account) || account.xbox_profile_verified {
+        if let Some(gamer_tag) = account
+            .gamer_tag
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return Some(gamer_tag.to_string());
+        }
+    }
+
+    if let Some(username) = account
+        .username
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if let Some(local_part) = launcher_account_email_local_part(username) {
+            if let Some(stylized) = account
+                .gamer_tag
+                .as_deref()
+                .and_then(|gamer_tag| stylize_unverified_account_name(&local_part, gamer_tag))
+            {
+                return Some(stylized);
+            }
+
+            return Some(local_part);
+        }
+
+        return Some(username.to_string());
+    }
+
+    account
+        .gamer_tag
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn launcher_account_has_verified_profile(account: &LauncherAccount) -> bool {
+    account
+        .profile_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some()
+}
+
+fn launcher_account_email_local_part(value: &str) -> Option<String> {
+    let local_part = value
+        .split_once('@')
+        .map(|(local_part, _domain)| local_part)
+        .unwrap_or(value)
+        .trim();
+
+    if local_part.is_empty() {
+        None
+    } else {
+        Some(local_part.to_string())
+    }
+}
+
+fn launcher_account_username_looks_like_email(account: &LauncherAccount) -> bool {
+    account
+        .username
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| value.contains('@'))
+}
+
+fn stylize_unverified_account_name(local_part: &str, gamer_tag: &str) -> Option<String> {
+    let local_part = local_part.trim();
+    if local_part.is_empty() {
+        return None;
+    }
+
+    let tokens = gamer_tag
+        .split(|character: char| {
+            character.is_ascii_whitespace() || character == '_' || character == '-'
+        })
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    if tokens.len() < 2 {
+        return None;
+    }
+
+    let local_lower = local_part.to_ascii_lowercase();
+    let token_orders = [
+        tokens.clone(),
+        tokens.iter().rev().copied().collect::<Vec<_>>(),
+    ];
+
+    for order in token_orders {
+        let joined = order
+            .iter()
+            .map(|value| value.to_ascii_lowercase())
+            .collect::<String>();
+        if joined != local_lower {
+            continue;
+        }
+
+        let Some(prefix) = order.first().copied().filter(|value| {
+            value
+                .chars()
+                .all(|character| !character.is_ascii_lowercase())
+        }) else {
+            continue;
+        };
+
+        if local_part.len() < prefix.len() {
+            continue;
+        }
+
+        return Some(format!("{prefix}{}", &local_part[prefix.len()..]));
+    }
+
+    None
+}
+
+#[derive(Debug, Clone)]
+struct ParsedLauncherAccountRecord {
+    account: LauncherAccount,
+    raw: Map<String, Value>,
+}
+
+#[derive(Debug, Clone)]
+struct ParsedLauncherAccountsFile {
+    path: PathBuf,
+    root: Value,
+    active_account_id: Option<String>,
+    client_token: Option<String>,
+    accounts: Vec<ParsedLauncherAccountRecord>,
 }
 
 pub fn load_launcher_snapshot() -> Result<LauncherSnapshot, String> {
@@ -185,20 +324,20 @@ pub fn load_launcher_snapshot() -> Result<LauncherSnapshot, String> {
     };
 
     let active_account = read_active_launcher_account()?.and_then(|account| {
-        account
-            .gamer_tag
-            .as_ref()
-            .or(account.username.as_ref())
-            .map(|name| ActiveLauncherAccount {
-                username: name.clone(),
-                auth_source: "official-launcher".to_string(),
-            })
+        let local_id = account.local_id.clone()?;
+        preferred_launcher_account_display_name(&account).map(|name| ActiveLauncherAccount {
+            local_id,
+            username: name,
+            auth_source: "official-launcher".to_string(),
+            has_java_access: false,
+        })
     });
 
     Ok(LauncherSnapshot {
         minecraft_root: minecraft_root.to_string_lossy().to_string(),
         launcher_available: launcher_available(),
         active_account,
+        launcher_accounts: Vec::new(),
         profiles,
         summary,
     })
@@ -228,105 +367,278 @@ pub fn resolve_profile_path(profile_id: &str, target: &str) -> Result<String, St
 }
 
 pub fn read_active_launcher_account() -> Result<Option<LauncherAccount>, String> {
-    let root = minecraft_root()?;
-    for file_name in [
-        "launcher_accounts_microsoft_store.json",
-        "launcher_accounts.json",
-    ] {
-        let path = root.join(file_name);
-        if !path.exists() {
+    let (accounts, active_account_id) = read_launcher_accounts_with_active_id()?;
+    let Some(active_account_id) = active_account_id else {
+        return Ok(None);
+    };
+
+    Ok(accounts
+        .into_iter()
+        .find(|account| account.local_id.as_deref() == Some(active_account_id.as_str())))
+}
+
+pub fn read_launcher_accounts() -> Result<Vec<LauncherAccount>, String> {
+    let (accounts, _active_account_id) = read_launcher_accounts_with_active_id()?;
+    Ok(accounts)
+}
+
+pub fn read_discovered_launcher_accounts() -> Result<Vec<LauncherAccount>, String> {
+    let path = discovered_launcher_accounts_path()?;
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let contents = fs::read_to_string(&path)
+        .map_err(|error| format!("{} を読み込めませんでした: {error}", path.display()))?;
+    let mut accounts = serde_json::from_str::<Vec<LauncherAccount>>(&contents)
+        .map_err(|error| format!("{} を解析できませんでした: {error}", path.display()))?;
+    dedupe_launcher_accounts(&mut accounts);
+    Ok(accounts)
+}
+
+pub fn merge_discovered_launcher_accounts(accounts: &[LauncherAccount]) -> Result<usize, String> {
+    let path = discovered_launcher_accounts_path()?;
+    let mut stored = read_discovered_launcher_accounts()?;
+    let mut added = 0usize;
+    let mut changed = false;
+
+    for incoming in accounts {
+        if launcher_account_identity_values(incoming).is_empty() {
             continue;
         }
 
-        let contents = fs::read_to_string(&path)
-            .map_err(|error| format!("{} を読み込めませんでした: {error}", path.display()))?;
-        let value: Value = serde_json::from_str(&contents)
-            .map_err(|error| format!("{} を解析できませんでした: {error}", path.display()))?;
-        let Some(active_account_id) = value
-            .get("activeAccountLocalId")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        else {
-            continue;
-        };
-        let Some(account) = value
-            .get("accounts")
-            .and_then(Value::as_object)
-            .and_then(|accounts| accounts.get(active_account_id))
-            .and_then(Value::as_object)
-        else {
-            continue;
-        };
-
-        let gamer_tag = account
-            .get("minecraftProfile")
-            .and_then(Value::as_object)
-            .and_then(|profile| profile.get("name"))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
-        let profile_id = account
-            .get("minecraftProfile")
-            .and_then(Value::as_object)
-            .and_then(|profile| profile.get("id"))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
-        let user_properties = account.get("userProperites").and_then(|value| {
-            if value.is_null() {
-                None
-            } else {
-                serde_json::to_string(value).ok()
+        if let Some(existing) = stored
+            .iter_mut()
+            .find(|current| launcher_accounts_match(current, incoming))
+        {
+            let before = existing.clone();
+            merge_launcher_account_fields(existing, incoming);
+            if *existing != before {
+                changed = true;
             }
-        });
+            continue;
+        }
 
-        return Ok(Some(LauncherAccount {
-            username: account
-                .get("username")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string),
-            gamer_tag,
-            profile_id,
-            access_token: account
-                .get("accessToken")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string),
-            access_token_expires_at: account
-                .get("accessTokenExpiresAt")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string),
-            client_token: value
-                .get("mojangClientToken")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string),
-            xuid: account
-                .get("remoteId")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string),
-            local_id: account
-                .get("localId")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string),
-            user_properties,
-        }));
+        stored.push(incoming.clone());
+        added += 1;
+        changed = true;
     }
 
-    Ok(None)
+    if changed {
+        dedupe_launcher_accounts(&mut stored);
+        write_discovered_launcher_accounts(&path, &stored)?;
+    }
+
+    Ok(added)
+}
+
+pub fn set_active_launcher_account(local_id: &str) -> Result<String, String> {
+    let target_path = primary_launcher_accounts_path()?;
+    let mut parsed = if target_path.exists() {
+        parse_launcher_accounts_file(&target_path)?
+    } else {
+        ParsedLauncherAccountsFile {
+            path: target_path.clone(),
+            root: serde_json::json!({
+                "accounts": {},
+                "activeAccountLocalId": "",
+                "mojangClientToken": "",
+            }),
+            active_account_id: None,
+            client_token: None,
+            accounts: Vec::new(),
+        }
+    };
+
+    let mut selected_record = parsed
+        .accounts
+        .iter()
+        .find(|entry| entry.account.local_id.as_deref() == Some(local_id))
+        .cloned();
+    let mut selected_client_token = parsed.client_token.clone();
+
+    if selected_record.is_none() {
+        let root = minecraft_root()?;
+        for file_name in [
+            "launcher_accounts_microsoft_store.json",
+            "launcher_accounts.json",
+        ] {
+            let path = root.join(file_name);
+            if path == parsed.path || !path.exists() {
+                continue;
+            }
+            let source = match parse_launcher_accounts_file(&path) {
+                Ok(source) => source,
+                Err(_) => continue,
+            };
+            let source_client_token = source.client_token.clone();
+            let Some(record) = source
+                .accounts
+                .into_iter()
+                .find(|entry| entry.account.local_id.as_deref() == Some(local_id))
+            else {
+                continue;
+            };
+
+            let Some(root_object) = parsed.root.as_object_mut() else {
+                return Err(format!(
+                    "{} のルート形式を解釈できませんでした。",
+                    parsed.path.display()
+                ));
+            };
+            let accounts = ensure_json_object_field(root_object, "accounts")?;
+            accounts.insert(local_id.to_string(), Value::Object(record.raw.clone()));
+            selected_record = Some(record);
+            selected_client_token = source_client_token.or(selected_client_token);
+            break;
+        }
+    }
+
+    if selected_record.is_none() {
+        let Some(discovered) = read_discovered_launcher_accounts()?
+            .into_iter()
+            .find(|entry| entry.local_id.as_deref() == Some(local_id))
+        else {
+            return Err("指定された Launcher アカウントが見つかりませんでした。".to_string());
+        };
+
+        let raw = build_launcher_account_record(&discovered);
+        let Some(root_object) = parsed.root.as_object_mut() else {
+            return Err(format!(
+                "{} のルート形式を解釈できませんでした。",
+                parsed.path.display()
+            ));
+        };
+        let accounts = ensure_json_object_field(root_object, "accounts")?;
+        accounts.insert(local_id.to_string(), Value::Object(raw.clone()));
+        selected_client_token = discovered.client_token.clone().or(selected_client_token);
+        selected_record = Some(ParsedLauncherAccountRecord {
+            account: discovered,
+            raw,
+        });
+    }
+
+    let Some(record) = selected_record else {
+        return Err("指定された Launcher アカウントが見つかりませんでした。".to_string());
+    };
+
+    let display_name = preferred_launcher_account_display_name(&record.account)
+        .unwrap_or_else(|| "アカウント".to_string());
+
+    let Some(root_object) = parsed.root.as_object_mut() else {
+        return Err(format!(
+            "{} のルート形式を解釈できませんでした。",
+            parsed.path.display()
+        ));
+    };
+    if root_object
+        .get("mojangClientToken")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_none()
+    {
+        if let Some(client_token) = selected_client_token
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            root_object.insert(
+                "mojangClientToken".to_string(),
+                Value::String(client_token.to_string()),
+            );
+        }
+    }
+    root_object.insert(
+        "activeAccountLocalId".to_string(),
+        Value::String(local_id.to_string()),
+    );
+
+    write_launcher_json_file(&parsed.path, &parsed.root)?;
+    Ok(display_name)
+}
+
+pub fn scan_and_merge_launcher_accounts() -> Result<(usize, usize, usize), String> {
+    let target_accounts_path = primary_launcher_accounts_path()?;
+    let candidate_paths = discover_launcher_metadata_files(&[
+        "launcher_accounts_microsoft_store.json",
+        "launcher_accounts.json",
+    ])?;
+
+    let scanned_files = candidate_paths.len();
+    let mut merged_accounts = 0usize;
+
+    let mut target_accounts_file = if target_accounts_path.exists() {
+        parse_launcher_accounts_file(&target_accounts_path)?
+    } else {
+        ParsedLauncherAccountsFile {
+            path: target_accounts_path.clone(),
+            root: serde_json::json!({
+                "accounts": {},
+                "activeAccountLocalId": "",
+                "mojangClientToken": "",
+            }),
+            active_account_id: None,
+            client_token: None,
+            accounts: Vec::new(),
+        }
+    };
+
+    let mut known_local_ids = target_accounts_file
+        .accounts
+        .iter()
+        .filter_map(|entry| entry.account.local_id.clone())
+        .collect::<HashSet<_>>();
+
+    for path in candidate_paths {
+        if path == target_accounts_file.path {
+            continue;
+        }
+
+        let parsed = match parse_launcher_accounts_file(&path) {
+            Ok(parsed) => parsed,
+            Err(_) => continue,
+        };
+
+        if target_accounts_file.client_token.is_none() && parsed.client_token.is_some() {
+            if let Some(root_object) = target_accounts_file.root.as_object_mut() {
+                root_object.insert(
+                    "mojangClientToken".to_string(),
+                    Value::String(parsed.client_token.clone().unwrap_or_default()),
+                );
+            }
+            target_accounts_file.client_token = parsed.client_token.clone();
+        }
+
+        for record in parsed.accounts {
+            let Some(local_id) = record.account.local_id.clone() else {
+                continue;
+            };
+            if !known_local_ids.insert(local_id.clone()) {
+                continue;
+            }
+
+            let Some(root_object) = target_accounts_file.root.as_object_mut() else {
+                return Err(format!(
+                    "{} のルート形式を解釈できませんでした。",
+                    target_accounts_file.path.display()
+                ));
+            };
+            let accounts = ensure_json_object_field(root_object, "accounts")?;
+            accounts.insert(local_id, Value::Object(record.raw.clone()));
+            target_accounts_file.accounts.push(record);
+            merged_accounts += 1;
+        }
+    }
+
+    if !target_accounts_path.exists() || merged_accounts > 0 {
+        write_launcher_json_file(&target_accounts_file.path, &target_accounts_file.root)?;
+    }
+
+    let target_entitlements_path = primary_launcher_entitlements_path()?;
+    let merged_entitlements = scan_and_merge_launcher_entitlements(&target_entitlements_path)?;
+
+    Ok((scanned_files, merged_accounts, merged_entitlements))
 }
 
 pub fn resolve_profile_mods_dir(profile_id: &str, game_dir: &str) -> Result<PathBuf, String> {
@@ -420,17 +732,14 @@ pub fn track_installed_project_with_source(
     let root = minecraft_root()?;
     let mut entries = read_tracked_projects(&root, profile_id)?;
 
-    if let Some(existing) = entries
-        .iter_mut()
-        .find(|entry| {
-            entry.file_name == file_name
-                || (!source.project_id.is_empty() && entry.project_id == source.project_id)
-                || (source.curseforge_project_id.is_some()
-                    && source.curseforge_file_id.is_some()
-                    && entry.curseforge_project_id == source.curseforge_project_id
-                    && entry.curseforge_file_id == source.curseforge_file_id)
-        })
-    {
+    if let Some(existing) = entries.iter_mut().find(|entry| {
+        entry.file_name == file_name
+            || (!source.project_id.is_empty() && entry.project_id == source.project_id)
+            || (source.curseforge_project_id.is_some()
+                && source.curseforge_file_id.is_some()
+                && entry.curseforge_project_id == source.curseforge_project_id
+                && entry.curseforge_file_id == source.curseforge_file_id)
+    }) {
         existing.project_id = source.project_id;
         existing.file_name = file_name.to_string();
         existing.source = source.source;
@@ -519,6 +828,598 @@ fn profile_storage_dir(minecraft_root: &Path, profile_id: &str) -> PathBuf {
         .join(".vanillalauncher")
         .join("profiles")
         .join(sanitize_profile_id(profile_id))
+}
+
+fn read_launcher_accounts_with_active_id() -> Result<(Vec<LauncherAccount>, Option<String>), String>
+{
+    let root = minecraft_root()?;
+    let mut accounts = Vec::new();
+    let mut active_account_id = None;
+
+    for file_name in [
+        "launcher_accounts_microsoft_store.json",
+        "launcher_accounts.json",
+    ] {
+        let path = root.join(file_name);
+        if !path.exists() {
+            continue;
+        }
+
+        let parsed = parse_launcher_accounts_file(&path)?;
+        if active_account_id.is_none() {
+            active_account_id = parsed.active_account_id.clone();
+        }
+        accounts.extend(parsed.accounts.into_iter().map(|entry| entry.account));
+    }
+
+    if let Ok(discovered_accounts) = read_discovered_launcher_accounts() {
+        for account in &mut accounts {
+            if let Some(discovered) = discovered_accounts
+                .iter()
+                .find(|candidate| launcher_accounts_match(account, candidate))
+            {
+                merge_launcher_account_fields(account, discovered);
+            }
+        }
+    }
+
+    dedupe_launcher_accounts(&mut accounts);
+    Ok((accounts, active_account_id))
+}
+
+fn parse_launcher_accounts_file(path: &Path) -> Result<ParsedLauncherAccountsFile, String> {
+    let contents = fs::read_to_string(path)
+        .map_err(|error| format!("{} を読み込めませんでした: {error}", path.display()))?;
+    let value: Value = serde_json::from_str(&contents)
+        .map_err(|error| format!("{} を解析できませんでした: {error}", path.display()))?;
+    let active_account_id = value
+        .get("activeAccountLocalId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(str::to_string);
+    let client_token = value
+        .get("mojangClientToken")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(str::to_string);
+
+    let accounts = value
+        .get("accounts")
+        .and_then(Value::as_object)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|(local_id, value)| {
+                    let account = value.as_object()?;
+                    Some(ParsedLauncherAccountRecord {
+                        account: parse_launcher_account_entry(
+                            account,
+                            client_token.as_deref(),
+                            Some(local_id.as_str()),
+                        ),
+                        raw: account.clone(),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    Ok(ParsedLauncherAccountsFile {
+        path: path.to_path_buf(),
+        root: value,
+        active_account_id,
+        client_token,
+        accounts,
+    })
+}
+
+fn parse_launcher_account_entry(
+    account: &Map<String, Value>,
+    client_token: Option<&str>,
+    local_id_hint: Option<&str>,
+) -> LauncherAccount {
+    let gamer_tag = account
+        .get("minecraftProfile")
+        .and_then(Value::as_object)
+        .and_then(|profile| profile.get("name"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let profile_id = account
+        .get("minecraftProfile")
+        .and_then(Value::as_object)
+        .and_then(|profile| profile.get("id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let user_properties = account.get("userProperites").and_then(|value| {
+        if value.is_null() {
+            None
+        } else {
+            serde_json::to_string(value).ok()
+        }
+    });
+
+    LauncherAccount {
+        username: account
+            .get("username")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+        gamer_tag,
+        profile_id,
+        access_token: account
+            .get("accessToken")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+        access_token_expires_at: account
+            .get("accessTokenExpiresAt")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+        client_token: client_token.map(str::to_string),
+        xuid: account
+            .get("remoteId")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+        local_id: account
+            .get("localId")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                local_id_hint
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            }),
+        user_properties,
+        xbox_profile_verified: account
+            .get("xboxProfileVerified")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    }
+}
+
+fn build_launcher_account_record(account: &LauncherAccount) -> Map<String, Value> {
+    let mut raw = Map::new();
+
+    if let Some(local_id) = account
+        .local_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        raw.insert("localId".to_string(), Value::String(local_id.to_string()));
+    }
+    if let Some(username) = account
+        .username
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        raw.insert("username".to_string(), Value::String(username.to_string()));
+    }
+    if let Some(access_token) = account
+        .access_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        raw.insert(
+            "accessToken".to_string(),
+            Value::String(access_token.to_string()),
+        );
+    }
+    if let Some(expires_at) = account
+        .access_token_expires_at
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        raw.insert(
+            "accessTokenExpiresAt".to_string(),
+            Value::String(expires_at.to_string()),
+        );
+    }
+    if let Some(xuid) = account
+        .xuid
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        raw.insert("remoteId".to_string(), Value::String(xuid.to_string()));
+    }
+
+    let mut profile = Map::new();
+    if let Some(profile_id) = account
+        .profile_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        profile.insert("id".to_string(), Value::String(profile_id.to_string()));
+    }
+    if let Some(gamer_tag) = account
+        .gamer_tag
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        profile.insert("name".to_string(), Value::String(gamer_tag.to_string()));
+    }
+    if !profile.is_empty() {
+        raw.insert("minecraftProfile".to_string(), Value::Object(profile));
+    }
+
+    if let Some(user_properties) = account
+        .user_properties
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if let Ok(parsed) = serde_json::from_str::<Value>(user_properties) {
+            raw.insert("userProperites".to_string(), parsed);
+        }
+    }
+    if account.xbox_profile_verified {
+        raw.insert("xboxProfileVerified".to_string(), Value::Bool(true));
+    }
+
+    raw.insert("type".to_string(), Value::String("Xbox".to_string()));
+
+    raw
+}
+
+fn dedupe_launcher_accounts(accounts: &mut Vec<LauncherAccount>) {
+    let mut seen = HashSet::new();
+    accounts.retain(|account| {
+        let key = account
+            .local_id
+            .clone()
+            .or_else(|| account.profile_id.clone())
+            .or_else(|| account.xuid.clone())
+            .or_else(|| account.username.clone())
+            .unwrap_or_else(|| format!("unknown-{}", seen.len()));
+        seen.insert(key)
+    });
+}
+
+fn launcher_accounts_match(left: &LauncherAccount, right: &LauncherAccount) -> bool {
+    let right_keys = launcher_account_identity_values(right);
+    if right_keys.is_empty() {
+        return false;
+    }
+
+    launcher_account_identity_values(left)
+        .into_iter()
+        .any(|value| right_keys.contains(&value))
+}
+
+fn launcher_account_identity_values(account: &LauncherAccount) -> Vec<String> {
+    let mut values = Vec::new();
+
+    for value in [
+        account.local_id.as_deref(),
+        account.profile_id.as_deref(),
+        account.xuid.as_deref(),
+        account.username.as_deref(),
+        account.gamer_tag.as_deref(),
+    ] {
+        let Some(value) = value.map(str::trim).filter(|entry| !entry.is_empty()) else {
+            continue;
+        };
+        values.push(value.to_ascii_lowercase());
+    }
+
+    values.sort();
+    values.dedup();
+    values
+}
+
+pub(crate) fn merge_launcher_account_fields(target: &mut LauncherAccount, source: &LauncherAccount) {
+    merge_launcher_account_option(&mut target.username, &source.username);
+    merge_launcher_account_gamer_tag(target, source);
+    merge_launcher_account_option(&mut target.profile_id, &source.profile_id);
+    merge_launcher_account_option(&mut target.access_token, &source.access_token);
+    merge_launcher_account_option(
+        &mut target.access_token_expires_at,
+        &source.access_token_expires_at,
+    );
+    merge_launcher_account_option(&mut target.client_token, &source.client_token);
+    merge_launcher_account_option(&mut target.xuid, &source.xuid);
+    merge_launcher_account_option(&mut target.local_id, &source.local_id);
+    merge_launcher_account_option(&mut target.user_properties, &source.user_properties);
+    target.xbox_profile_verified |= source.xbox_profile_verified;
+}
+
+fn merge_launcher_account_gamer_tag(target: &mut LauncherAccount, source: &LauncherAccount) {
+    let Some(source_gamer_tag) = source
+        .gamer_tag
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+
+    let target_has_verified_profile = launcher_account_has_verified_profile(target);
+    let source_has_verified_profile = launcher_account_has_verified_profile(source);
+    let target_username_is_email = launcher_account_username_looks_like_email(target);
+    let should_replace = target
+        .gamer_tag
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_none()
+        || (source_has_verified_profile
+            && (!target_has_verified_profile
+                || (target_username_is_email && !target.xbox_profile_verified)))
+        || (source.xbox_profile_verified
+            && !target_has_verified_profile
+            && !target.xbox_profile_verified);
+
+    if should_replace {
+        target.gamer_tag = Some(source_gamer_tag.to_string());
+    }
+}
+
+fn merge_launcher_account_option(target: &mut Option<String>, source: &Option<String>) {
+    if target
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some()
+    {
+        return;
+    }
+
+    if let Some(value) = source
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        *target = Some(value.to_string());
+    }
+}
+
+fn primary_launcher_accounts_path() -> Result<PathBuf, String> {
+    let root = minecraft_root()?;
+    let microsoft_store = root.join("launcher_accounts_microsoft_store.json");
+    if microsoft_store.exists() {
+        return Ok(microsoft_store);
+    }
+
+    let classic = root.join("launcher_accounts.json");
+    if classic.exists() {
+        return Ok(classic);
+    }
+
+    Ok(microsoft_store)
+}
+
+fn primary_launcher_entitlements_path() -> Result<PathBuf, String> {
+    let root = minecraft_root()?;
+    let microsoft_store = root.join("launcher_entitlements_microsoft_store.json");
+    if microsoft_store.exists() {
+        return Ok(microsoft_store);
+    }
+
+    let classic = root.join("launcher_entitlements.json");
+    if classic.exists() {
+        return Ok(classic);
+    }
+
+    Ok(microsoft_store)
+}
+
+fn discovered_launcher_accounts_path() -> Result<PathBuf, String> {
+    let root = minecraft_root()?;
+    Ok(root
+        .join(".vanillalauncher")
+        .join("discovered-launcher-accounts.json"))
+}
+
+fn write_launcher_json_file(path: &Path, value: &Value) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("{} を準備できませんでした: {error}", parent.display()))?;
+    }
+    let text = serde_json::to_string_pretty(value).map_err(|error| {
+        format!(
+            "{} を保存形式へ変換できませんでした: {error}",
+            path.display()
+        )
+    })?;
+    fs::write(path, text)
+        .map_err(|error| format!("{} を更新できませんでした: {error}", path.display()))
+}
+
+fn write_discovered_launcher_accounts(
+    path: &Path,
+    accounts: &[LauncherAccount],
+) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("{} を準備できませんでした: {error}", parent.display()))?;
+    }
+    let text = serde_json::to_string_pretty(accounts).map_err(|error| {
+        format!(
+            "{} を保存形式へ変換できませんでした: {error}",
+            path.display()
+        )
+    })?;
+    fs::write(path, text)
+        .map_err(|error| format!("{} を更新できませんでした: {error}", path.display()))
+}
+
+fn ensure_json_object_field<'a>(
+    object: &'a mut Map<String, Value>,
+    key: &str,
+) -> Result<&'a mut Map<String, Value>, String> {
+    let value = object
+        .entry(key.to_string())
+        .or_insert_with(|| Value::Object(Map::new()));
+    if !value.is_object() {
+        *value = Value::Object(Map::new());
+    }
+    value
+        .as_object_mut()
+        .ok_or_else(|| format!("{key} をオブジェクトとして扱えませんでした。"))
+}
+
+fn discover_launcher_metadata_files(file_names: &[&str]) -> Result<Vec<PathBuf>, String> {
+    let mut roots = Vec::new();
+    roots.push(minecraft_root()?);
+    if let Some(appdata) = env::var_os("APPDATA") {
+        roots.push(PathBuf::from(appdata).join(".minecraft"));
+    }
+    if let Some(local_app_data) = env::var_os("LOCALAPPDATA") {
+        roots.push(PathBuf::from(&local_app_data).join("Packages"));
+        roots.push(PathBuf::from(local_app_data).join("Microsoft"));
+    }
+
+    let wanted = file_names
+        .iter()
+        .map(|entry| entry.to_ascii_lowercase())
+        .collect::<HashSet<_>>();
+    let mut queue = VecDeque::new();
+    let mut visited = HashSet::new();
+    let mut found = Vec::new();
+
+    for root in roots {
+        if root.exists() && visited.insert(root.clone()) {
+            queue.push_back((root, 0usize));
+        }
+    }
+
+    while let Some((dir, depth)) = queue.pop_front() {
+        if found.len() >= 64 {
+            break;
+        }
+
+        let entries = match fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+
+            if file_type.is_file() {
+                let file_name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+                if wanted.contains(&file_name) {
+                    found.push(path);
+                }
+                continue;
+            }
+
+            if !file_type.is_dir() || depth >= 6 {
+                continue;
+            }
+
+            if should_descend_launcher_scan_dir(&path, depth + 1) && visited.insert(path.clone()) {
+                queue.push_back((path, depth + 1));
+            }
+        }
+    }
+
+    found.sort();
+    found.dedup();
+    Ok(found)
+}
+
+fn should_descend_launcher_scan_dir(path: &Path, depth: usize) -> bool {
+    if depth <= 2 {
+        return true;
+    }
+
+    path.file_name()
+        .and_then(|value| value.to_str())
+        .map(|value| {
+            let lower = value.to_ascii_lowercase();
+            lower.contains("minecraft")
+                || lower.contains("launcher")
+                || lower.contains("mojang")
+                || lower.contains("microsoft")
+                || lower.contains("xbox")
+                || lower.contains("game")
+                || lower.contains("roaming")
+                || lower.contains("localcache")
+                || lower.contains("4297127d64ec6")
+        })
+        .unwrap_or(false)
+}
+
+fn scan_and_merge_launcher_entitlements(target_path: &Path) -> Result<usize, String> {
+    let mut merged = 0usize;
+    let mut target_value = if target_path.exists() {
+        let contents = fs::read_to_string(target_path).map_err(|error| {
+            format!("{} を読み込めませんでした: {error}", target_path.display())
+        })?;
+        serde_json::from_str::<Value>(&contents)
+            .map_err(|error| format!("{} を解析できませんでした: {error}", target_path.display()))?
+    } else {
+        serde_json::json!({ "data": {}, "formatVersion": 1 })
+    };
+
+    let candidate_paths = discover_launcher_metadata_files(&[
+        "launcher_entitlements_microsoft_store.json",
+        "launcher_entitlements.json",
+    ])?;
+
+    for path in candidate_paths {
+        if path == target_path {
+            continue;
+        }
+
+        let contents = match fs::read_to_string(&path) {
+            Ok(contents) => contents,
+            Err(_) => continue,
+        };
+        let value = match serde_json::from_str::<Value>(&contents) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        let Some(source_data) = value.get("data").and_then(Value::as_object) else {
+            continue;
+        };
+        let Some(target_root) = target_value.as_object_mut() else {
+            return Err(format!(
+                "{} のルート形式を解釈できませんでした。",
+                target_path.display()
+            ));
+        };
+        let target_data = ensure_json_object_field(target_root, "data")?;
+
+        for (key, payload) in source_data {
+            if target_data.contains_key(key) {
+                continue;
+            }
+            target_data.insert(key.clone(), payload.clone());
+            merged += 1;
+        }
+    }
+
+    if !target_path.exists() || merged > 0 {
+        write_launcher_json_file(target_path, &target_value)?;
+    }
+
+    Ok(merged)
 }
 
 pub fn profile_instance_dir(minecraft_root: &Path, loader: &str, profile_name: &str) -> PathBuf {
@@ -1236,7 +2137,9 @@ fn seed_profile_preferences_from_vanilla(
 fn vanilla_options_path(minecraft_root: &Path) -> PathBuf {
     if cfg!(target_os = "windows") {
         if let Some(appdata) = env::var_os("APPDATA") {
-            return PathBuf::from(appdata).join(".minecraft").join("options.txt");
+            return PathBuf::from(appdata)
+                .join(".minecraft")
+                .join("options.txt");
         }
     }
 
@@ -1304,12 +2207,7 @@ fn should_seed_option_key(key: &str) -> bool {
     key.starts_with("key_")
         || key.starts_with("mouse")
         || key.starts_with("soundCategory_")
-        || matches!(
-            key,
-            "lang"
-                | "fov"
-                | "fovEffectScale"
-        )
+        || matches!(key, "lang" | "fov" | "fovEffectScale")
 }
 
 pub fn normalize_loader(loader: Option<&str>) -> &'static str {
@@ -1906,4 +2804,99 @@ fn release_version_regex() -> &'static Regex {
         Regex::new(r"\b\d+\.\d+(?:\.\d+)?(?:-(?:pre|rc)-?\d+|(?:-snapshot-\d+))?\b")
             .expect("release version regex")
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{merge_launcher_account_fields, preferred_launcher_account_display_name, LauncherAccount};
+
+    fn launcher_account(
+        username: Option<&str>,
+        gamer_tag: Option<&str>,
+        profile_id: Option<&str>,
+    ) -> LauncherAccount {
+        LauncherAccount {
+            username: username.map(str::to_string),
+            gamer_tag: gamer_tag.map(str::to_string),
+            profile_id: profile_id.map(str::to_string),
+            access_token: None,
+            access_token_expires_at: None,
+            client_token: None,
+            xuid: None,
+            local_id: Some("local-id".to_string()),
+            user_properties: None,
+            xbox_profile_verified: false,
+        }
+    }
+
+    #[test]
+    fn preferred_display_name_uses_email_local_part_without_java_profile() {
+        let account = launcher_account(Some("pexkurann@gmail.com"), Some("Kurann PEX"), None);
+
+        assert_eq!(
+            preferred_launcher_account_display_name(&account).as_deref(),
+            Some("PEXkurann")
+        );
+    }
+
+    #[test]
+    fn preferred_display_name_uses_gamertag_when_java_profile_exists() {
+        let account = launcher_account(
+            Some("pexkurann@gmail.com"),
+            Some("PEXkoukunn"),
+            Some("11112222333344445555666677778888"),
+        );
+
+        assert_eq!(
+            preferred_launcher_account_display_name(&account).as_deref(),
+            Some("PEXkoukunn")
+        );
+    }
+
+    #[test]
+    fn preferred_display_name_uses_verified_xbox_profile_without_java_profile() {
+        let mut account = launcher_account(Some("pexkurann@gmail.com"), Some("CoolDragon99"), None);
+        account.xbox_profile_verified = true;
+
+        assert_eq!(
+            preferred_launcher_account_display_name(&account).as_deref(),
+            Some("CoolDragon99")
+        );
+    }
+
+    #[test]
+    fn verified_profile_name_replaces_stale_detected_hint() {
+        let mut target = launcher_account(
+            Some("isseidas@gmail.com"),
+            Some("PC My"),
+            Some("c53f907d0ad242c699c33994a3c1caa4"),
+        );
+        let source = launcher_account(
+            Some("isseidas@gmail.com"),
+            Some("PEXkoukunn"),
+            Some("c53f907d0ad242c699c33994a3c1caa4"),
+        );
+
+        merge_launcher_account_fields(&mut target, &source);
+
+        assert_eq!(target.gamer_tag.as_deref(), Some("PEXkoukunn"));
+    }
+
+    #[test]
+    fn official_verified_profile_name_is_not_replaced_by_stale_discovered_hint() {
+        let mut target = launcher_account(
+            Some("Hotissei2019"),
+            Some("PEXkoukunn"),
+            Some("c53f907d0ad242c699c33994a3c1caa4"),
+        );
+        let source = launcher_account(
+            Some("isseidas@gmail.com"),
+            Some("PC My"),
+            Some("c53f907d0ad242c699c33994a3c1caa4"),
+        );
+
+        merge_launcher_account_fields(&mut target, &source);
+
+        assert_eq!(target.gamer_tag.as_deref(), Some("PEXkoukunn"));
+    }
 }
