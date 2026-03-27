@@ -267,7 +267,8 @@ pub(super) async fn resolve_launch_auth() -> Result<VersionLaunchAuth, String> {
     };
 
     let xbox_profile = if !cached_xbox_tokens.is_empty() {
-        let mut resolved = None;
+        let mut resolved_access_token: Option<String> = None;
+        let mut resolved_profile: Option<(String, String)> = None;
         let mut attempted_tokens = HashSet::new();
         let (planned_attempts, used_saved_state) =
             xbox_auth::build_prioritized_rps_attempts(&cached_xbox_tokens, 10);
@@ -307,20 +308,17 @@ pub(super) async fn resolve_launch_auth() -> Result<VersionLaunchAuth, String> {
                     &variant_label,
                     &candidate_token,
                 );
-                resolved = xbox_auth::fetch_minecraft_profile_for_token(&access_token)
-                    .await
-                    .map(|profile| (access_token, profile));
-                if resolved.is_some() {
-                    break;
-                }
+                resolved_profile = xbox_auth::fetch_minecraft_profile_for_token(&access_token).await;
+                resolved_access_token = Some(access_token);
+                break;
             }
 
             std::thread::sleep(Duration::from_millis(180));
         }
-        if resolved.is_none() {
+        if resolved_access_token.is_none() {
             app_log::append_log("WARN", "all cached Xbox token exchanges failed");
         }
-        resolved
+        resolved_access_token.map(|token| (token, resolved_profile))
     } else {
         None
     };
@@ -332,7 +330,7 @@ pub(super) async fn resolve_launch_auth() -> Result<VersionLaunchAuth, String> {
             "direct-account".to_string(),
         )
     } else if let Some((token, profile)) = xbox_profile {
-        (token, Some(profile), "direct-xbox-cache".to_string())
+        (token, profile, "direct-xbox-cache".to_string())
     } else {
         ("0".to_string(), None, "direct-runtime".to_string())
     };

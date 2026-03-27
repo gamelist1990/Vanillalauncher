@@ -272,11 +272,15 @@ fn update_app_settings(
 }
 
 #[tauri::command]
-fn ensure_java_runtime_available(
+async fn ensure_java_runtime_available(
     app: tauri::AppHandle,
     operation_id: Option<String>,
 ) -> Result<ActionResult, String> {
-    loaders::ensure_java_runtime_available_with_progress(&app, operation_id)
+    tauri::async_runtime::spawn_blocking(move || {
+        loaders::ensure_java_runtime_available_with_progress(&app, operation_id)
+    })
+    .await
+    .map_err(|error| format!("Java ランタイム準備ジョブの実行に失敗しました: {error}"))?
 }
 
 #[tauri::command]
