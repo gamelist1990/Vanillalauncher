@@ -98,6 +98,59 @@ fn suppress_console_window(command: &mut Command) {
     }
 }
 
+fn sanitize_launch_arguments(arguments: &[String]) -> Vec<String> {
+    let sensitive_flags = [
+        "--accessToken",
+        "--authSession",
+        "--clientId",
+        "--clientid",
+        "--uuid",
+        "--xuid",
+        "--userProperties",
+        "--username",
+    ];
+
+    let mut sanitized = Vec::with_capacity(arguments.len());
+    let mut mask_next = false;
+
+    for arg in arguments {
+        if mask_next {
+            sanitized.push("xxxx".to_string());
+            mask_next = false;
+            continue;
+        }
+
+        let lower = arg.to_lowercase();
+        if sensitive_flags
+            .iter()
+            .any(|flag| lower == flag.to_lowercase())
+        {
+            sanitized.push(arg.clone());
+            mask_next = true;
+            continue;
+        }
+
+        if let Some(idx) = sensitive_flags
+            .iter()
+            .find(|flag| lower.starts_with(&format!("{}=", flag.to_lowercase())))
+            .and_then(|_| arg.find('='))
+        {
+            sanitized.push(format!("{}=xxxx", &arg[..idx]));
+            continue;
+        }
+
+        // hide any obvious tokens or secrets
+        if lower.contains("token") || lower.contains("secret") {
+            sanitized.push("xxxx".to_string());
+            continue;
+        }
+
+        sanitized.push(arg.clone());
+    }
+
+    sanitized
+}
+
 fn record_profile_launch(profile_id: &str, pid: u32) -> Result<(), String> {
     launch_registry::record_profile_launch(profile_id, pid)
 }
@@ -446,6 +499,17 @@ pub async fn launch_profile_directly(
         .args(&launch_context.arguments)
         .current_dir(&launch_context.game_dir)
         .stdin(Stdio::null());
+
+    let sanitized_args = sanitize_launch_arguments(&launch_context.arguments);
+    app_log::append_log(
+        "INFO",
+        format!(
+            "direct launch command: {} {}",
+            launch_context.java_path.display(),
+            sanitized_args.join(" ")
+        ),
+    );
+
     suppress_console_window(&mut command);
     if cfg!(not(debug_assertions)) {
         command.stdout(Stdio::null()).stderr(Stdio::null());
