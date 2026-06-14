@@ -215,6 +215,11 @@ fn set_mod_enabled(
 }
 
 #[tauri::command]
+fn import_local_mod(profile_id: String, mod_path: String) -> Result<ActionResult, String> {
+    modrinth::import_local_mod(profile_id, mod_path)
+}
+
+#[tauri::command]
 fn remove_mod(profile_id: String, file_name: String) -> Result<ActionResult, String> {
     modrinth::remove_mod(profile_id, file_name)
 }
@@ -378,6 +383,7 @@ pub fn run() {
             scan_launcher_accounts,
             uninstall_modrinth_project,
             set_mod_enabled,
+            import_local_mod,
             remove_mod,
             resolve_profile_path,
             get_fabric_catalog,

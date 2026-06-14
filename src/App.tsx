@@ -1101,6 +1101,59 @@ function App() {
     }
   }
 
+  async function handleImportLocalMod() {
+    if (!selectedProfile) {
+      return;
+    }
+
+    const paths = await open({
+      title: "追加する Mod ファイルを選択",
+      multiple: true,
+      filters: [{ name: "Mod ファイル", extensions: ["jar"] }],
+    });
+
+    if (!paths) {
+      return;
+    }
+
+    const pathList = Array.isArray(paths) ? paths : [paths];
+    if (pathList.length === 0) {
+      return;
+    }
+
+    setBusyAction("import-local-mod");
+    let succeeded = 0;
+    let failed = 0;
+
+    try {
+      for (const modPath of pathList) {
+        try {
+          await launcherApi.importLocalMod(selectedProfile.id, modPath);
+          succeeded += 1;
+        } catch (error) {
+          pushNotice("error", errorMessage(error, `Mod のコピーに失敗しました。`));
+          failed += 1;
+        }
+      }
+
+      if (succeeded > 0) {
+        await refreshLauncher(selectedProfile.id);
+        if (failed === 0) {
+          pushNotice(
+            "success",
+            succeeded === 1
+              ? "Mod を追加しました。"
+              : `${succeeded} 件の Mod を追加しました。`,
+          );
+        } else {
+          pushNotice("info", `${succeeded} 件追加、${failed} 件は失敗しました。`);
+        }
+      }
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
   async function handleRemove(mod: InstalledMod) {
     if (!selectedProfile) {
       return;
@@ -1905,6 +1958,7 @@ function App() {
           onOpenModSource={(mod, remoteState) => void handleOpenModSource(mod, remoteState)}
           onOpenGameDir={() => void openSelectedPath("game")}
           onOpenModsDir={() => void openSelectedPath("mods")}
+          onImportLocalMod={() => void handleImportLocalMod()}
           onChangeDiscoverMode={setDiscoverMode}
           onChangeSearchQuery={setSearchQuery}
           onSearch={() => void handleSearch()}

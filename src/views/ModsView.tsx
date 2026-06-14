@@ -19,6 +19,7 @@ type ModsViewProps = {
   onOpenModSource: (mod: InstalledMod, remoteState?: ModRemoteState) => void;
   onOpenGameDir: () => void;
   onOpenModsDir: () => void;
+  onImportLocalMod: () => void;
 };
 
 export function ModsView({
@@ -37,6 +38,7 @@ export function ModsView({
   onOpenModSource,
   onOpenGameDir,
   onOpenModsDir,
+  onImportLocalMod,
 }: ModsViewProps) {
   const [filter, setFilter] = useState<"all" | "enabled" | "disabled">("all");
   const [query, setQuery] = useState("");
@@ -167,6 +169,9 @@ export function ModsView({
             </button>
           </div>
 
+          <button className="secondary-button" onClick={onImportLocalMod} disabled={!profile}>
+            Mod を追加
+          </button>
           <button className="secondary-button" onClick={onOpenModsDir} disabled={!profile}>
             この構成の mods
           </button>

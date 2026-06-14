@@ -1708,6 +1708,48 @@ pub fn set_mod_enabled(
     })
 }
 
+pub fn import_local_mod(profile_id: String, mod_path: String) -> Result<ActionResult, String> {
+    let source_path = PathBuf::from(mod_path.trim());
+    if !source_path.exists() {
+        return Err("指定された Mod ファイルが見つかりません。".to_string());
+    }
+
+    let file_name = source_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "ファイル名を取得できませんでした。".to_string())?
+        .to_string();
+
+    if !is_mod_archive(&file_name) {
+        return Err(
+            "対応していないファイル形式です。.jar ファイルを指定してください。".to_string(),
+        );
+    }
+
+    validate_file_name(&file_name)?;
+
+    let profile = find_profile(&profile_id)?;
+    let mods_dir = resolve_profile_mods_dir(&profile_id, &profile.game_dir)?;
+    fs::create_dir_all(&mods_dir)
+        .map_err(|error| format!("mods フォルダを準備できませんでした: {error}"))?;
+
+    let target_path = mods_dir.join(&file_name);
+    if target_path.exists() {
+        return Err(format!(
+            "{} はすでにこの構成に存在します。別名で保存するか、既存のファイルを削除してください。",
+            file_name
+        ));
+    }
+
+    fs::copy(&source_path, &target_path)
+        .map_err(|error| format!("Mod ファイルをコピーできませんでした: {error}"))?;
+
+    Ok(ActionResult {
+        message: format!("{} を {} に追加しました。", file_name, profile.name),
+        file_name,
+    })
+}
+
 pub fn remove_mod(profile_id: String, file_name: String) -> Result<ActionResult, String> {
     crate::minecraft::validate_file_name(&file_name)?;
     let profile = find_profile(&profile_id)?;

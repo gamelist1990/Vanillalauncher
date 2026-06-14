@@ -108,6 +108,8 @@ export const launcherApi = {
     invoke<ActionResult>("uninstall_modrinth_project", { profileId, projectId }),
   setModEnabled: (profileId: string, fileName: string, enabled: boolean) =>
     invoke<ActionResult>("set_mod_enabled", { profileId, fileName, enabled }),
+  importLocalMod: (profileId: string, modPath: string) =>
+    invoke<ActionResult>("import_local_mod", { profileId, modPath }),
   removeMod: (profileId: string, fileName: string) =>
     invoke<ActionResult>("remove_mod", { profileId, fileName }),
   resolveProfilePath: (profileId: string, target: "game" | "mods") =>

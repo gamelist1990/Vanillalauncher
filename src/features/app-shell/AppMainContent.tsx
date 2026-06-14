@@ -57,6 +57,7 @@ type AppMainContentProps = {
   onOpenModSource: (mod: InstalledMod, remoteState?: ModRemoteState) => void;
   onOpenGameDir: () => void;
   onOpenModsDir: () => void;
+  onImportLocalMod: () => void;
   onChangeDiscoverMode: (mode: "mods" | "modpacks") => void;
   onChangeSearchQuery: (value: string) => void;
   onSearch: () => void;
@@ -117,6 +118,7 @@ export function AppMainContent({
   onOpenModSource,
   onOpenGameDir,
   onOpenModsDir,
+  onImportLocalMod,
   onChangeDiscoverMode,
   onChangeSearchQuery,
   onSearch,
@@ -171,6 +173,7 @@ export function AppMainContent({
           onOpenModSource={onOpenModSource}
           onOpenGameDir={onOpenGameDir}
           onOpenModsDir={onOpenModsDir}
+          onImportLocalMod={onImportLocalMod}
         />
       ) : null}
 
