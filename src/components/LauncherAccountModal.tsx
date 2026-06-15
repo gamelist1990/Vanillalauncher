@@ -6,11 +6,13 @@ type LauncherAccountModalProps = {
   accounts: LauncherAccountEntry[];
   switchingLocalId?: string | null;
   scanning?: boolean;
+  xboxLoggingIn?: boolean;
   scanProgress?: ProgressState | null;
   interactionDisabled?: boolean;
   onClose: () => void;
   onSelectAccount: (localId: string) => void;
   onScanAccounts: () => void;
+  onXboxLogin: () => void;
   onOpenOfficialLauncher: () => void;
 };
 
@@ -19,11 +21,13 @@ export function LauncherAccountModal({
   accounts,
   switchingLocalId,
   scanning = false,
+  xboxLoggingIn = false,
   scanProgress = null,
   interactionDisabled = false,
   onClose,
   onSelectAccount,
   onScanAccounts,
+  onXboxLogin,
   onOpenOfficialLauncher,
 }: LauncherAccountModalProps) {
   useEffect(() => {
@@ -194,8 +198,16 @@ export function LauncherAccountModal({
           <button
             type="button"
             className="secondary-button"
+            onClick={onXboxLogin}
+            disabled={scanning || xboxLoggingIn || interactionDisabled}
+          >
+            {xboxLoggingIn ? "Xbox 確認中..." : "Xboxログイン / Java所有確認"}
+          </button>
+          <button
+            type="button"
+            className="secondary-button"
             onClick={onScanAccounts}
-            disabled={scanning || interactionDisabled}
+            disabled={scanning || xboxLoggingIn || interactionDisabled}
           >
             {scanning ? "検出中..." : "PC から再検出"}
           </button>

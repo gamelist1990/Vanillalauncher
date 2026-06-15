@@ -7,6 +7,8 @@ use crate::{
         read_active_launcher_account,
         read_discovered_launcher_accounts as read_discovered_launcher_accounts_in_minecraft,
         read_launcher_accounts,
+        launcher_account_email_local_part,
+        merge_launcher_account_fields,
         scan_and_merge_launcher_accounts as scan_and_merge_launcher_accounts_in_minecraft,
         set_active_launcher_account as set_active_launcher_account_in_minecraft,
         set_java_page_as_last_visited, set_profile_last_used, sync_profile_mods_to_game_dir,
@@ -241,10 +243,27 @@ pub fn get_launcher_accounts() -> Result<Vec<LauncherAccountEntry>, String> {
     let active_local_id = read_active_launcher_account()?.and_then(|account| account.local_id);
     let java_access_hints = xbox_auth::read_local_launcher_java_access_hints();
     let mut seen_identity_keys = HashSet::new();
+    let mut merged_accounts = accounts
+        .iter()
+        .cloned()
+        .map(|account| (account, true, "official-launcher".to_string()))
+        .collect::<Vec<_>>();
+
+    for discovered_account in discovered_accounts {
+        if let Some((target, _, _)) = merged_accounts
+            .iter_mut()
+            .find(|(account, _, _)| launcher_accounts_share_identity(account, &discovered_account))
+        {
+            merge_launcher_account_fields(target, &discovered_account);
+            continue;
+        }
+
+        merged_accounts.push((discovered_account, false, "pc-scan".to_string()));
+    }
 
     let mut entries = Vec::new();
 
-    for account in &accounts {
+    for (account, is_selectable, auth_source) in &merged_accounts {
         let keys = launcher_account_identity_keys(account);
         if keys.iter().any(|key| seen_identity_keys.contains(key)) {
             continue;
@@ -253,28 +272,8 @@ pub fn get_launcher_accounts() -> Result<Vec<LauncherAccountEntry>, String> {
             account,
             active_local_id.as_deref(),
             &java_access_hints,
-            true,
-            "official-launcher",
-        ) else {
-            continue;
-        };
-        for key in keys {
-            seen_identity_keys.insert(key);
-        }
-        entries.push(entry);
-    }
-
-    for account in &discovered_accounts {
-        let keys = launcher_account_identity_keys(account);
-        if keys.iter().any(|key| seen_identity_keys.contains(key)) {
-            continue;
-        }
-        let Some(entry) = build_launcher_account_entry(
-            account,
-            active_local_id.as_deref(),
-            &java_access_hints,
-            false,
-            "pc-scan",
+            *is_selectable,
+            auth_source,
         ) else {
             continue;
         };
@@ -298,6 +297,16 @@ pub fn get_launcher_accounts() -> Result<Vec<LauncherAccountEntry>, String> {
     });
 
     Ok(entries)
+}
+
+fn launcher_accounts_share_identity(
+    left: &crate::minecraft::LauncherAccount,
+    right: &crate::minecraft::LauncherAccount,
+) -> bool {
+    let right_keys = launcher_account_identity_keys(right);
+    launcher_account_identity_keys(left)
+        .into_iter()
+        .any(|key| right_keys.contains(&key))
 }
 
 pub fn set_active_launcher_account(local_id: String) -> Result<ActionResult, String> {
@@ -407,12 +416,23 @@ fn launcher_account_identity_keys(account: &crate::minecraft::LauncherAccount) -
         let Some(value) = value.map(str::trim).filter(|entry| !entry.is_empty()) else {
             continue;
         };
-        keys.push(value.to_ascii_lowercase());
+        push_launcher_account_identity_key(&mut keys, value);
+
+        if let Some(email_local_part) = launcher_account_email_local_part(value) {
+            push_launcher_account_identity_key(&mut keys, &email_local_part);
+        }
     }
 
     keys.sort();
     keys.dedup();
     keys
+}
+
+fn push_launcher_account_identity_key(keys: &mut Vec<String>, value: &str) {
+    let normalized = value.trim().to_ascii_lowercase();
+    if !normalized.is_empty() {
+        keys.push(normalized);
+    }
 }
 
 fn cached_xbox_account_hint_to_launcher_account(
@@ -426,26 +446,31 @@ fn cached_xbox_account_hint_to_launcher_account(
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())?;
 
+    let gamer_tag = hint
+        .gamer_tag
+        .or(hint.display_name)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let xuid = hint
+        .xuid
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let xbox_profile_verified = gamer_tag.is_some() || xuid.is_some();
+
     Some(crate::minecraft::LauncherAccount {
         username: hint
             .username
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty()),
-        gamer_tag: hint
-            .gamer_tag
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty()),
+        gamer_tag,
         profile_id: None,
         access_token: None,
         access_token_expires_at: None,
         client_token: None,
-        xuid: hint
-            .xuid
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty()),
+        xuid,
         local_id: Some(local_id),
         user_properties: None,
-        xbox_profile_verified: false,
+        xbox_profile_verified,
     })
 }
 

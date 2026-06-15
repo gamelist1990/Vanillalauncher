@@ -213,6 +213,7 @@ function App() {
   const [modpackVersionDialog, setModpackVersionDialog] = useState<ModpackVersionDialogState | null>(null);
   const [modpackExportDialog, setModpackExportDialog] = useState<ModpackExportDialogState | null>(null);
   const [progressDetailDialog, setProgressDetailDialog] = useState<ProgressDetailDialogState | null>(null);
+  const [localModImportOpen, setLocalModImportOpen] = useState(false);
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
   const [softwareStatus, setSoftwareStatus] = useState<SoftwareStatus | null>(null);
   const [loadingSettings, setLoadingSettings] = useState(false);
@@ -1106,52 +1107,7 @@ function App() {
       return;
     }
 
-    const paths = await open({
-      title: "追加する Mod ファイルを選択",
-      multiple: true,
-      filters: [{ name: "Mod ファイル", extensions: ["jar"] }],
-    });
-
-    if (!paths) {
-      return;
-    }
-
-    const pathList = Array.isArray(paths) ? paths : [paths];
-    if (pathList.length === 0) {
-      return;
-    }
-
-    setBusyAction("import-local-mod");
-    let succeeded = 0;
-    let failed = 0;
-
-    try {
-      for (const modPath of pathList) {
-        try {
-          await launcherApi.importLocalMod(selectedProfile.id, modPath);
-          succeeded += 1;
-        } catch (error) {
-          pushNotice("error", errorMessage(error, `Mod のコピーに失敗しました。`));
-          failed += 1;
-        }
-      }
-
-      if (succeeded > 0) {
-        await refreshLauncher(selectedProfile.id);
-        if (failed === 0) {
-          pushNotice(
-            "success",
-            succeeded === 1
-              ? "Mod を追加しました。"
-              : `${succeeded} 件の Mod を追加しました。`,
-          );
-        } else {
-          pushNotice("info", `${succeeded} 件追加、${failed} 件は失敗しました。`);
-        }
-      }
-    } finally {
-      setBusyAction(null);
-    }
+    setLocalModImportOpen(true);
   }
 
   async function handleRemove(mod: InstalledMod) {
@@ -1385,6 +1341,40 @@ function App() {
     }
   }
 
+  async function handleXboxLoginAndJavaCheck() {
+    const operationId = createOperationId("xbox-login");
+    setBusyAction(`xbox-login:${operationId}`);
+    upsertProgress({
+      operationId,
+      title: "Xboxログイン / Java所有確認",
+      detail: "Xbox 認証情報から Minecraft Java の所有状況を確認しています。",
+      percent: 2,
+    });
+
+    try {
+      const result = await launcherApi.ensureXboxRpsState(operationId);
+      if (result.succeeded) {
+        pushNotice(
+          "success",
+          `${result.message} Minecraft Java の所有を確認できました。`,
+        );
+      } else {
+        pushNotice(
+          "info",
+          `${result.message} 確認できない場合は、Xbox/Microsoft アカウントで公式 Launcher に一度ログインしてから再実行してください。`,
+        );
+      }
+
+      await launcherApi.scanLauncherAccounts(operationId);
+      await refreshLauncher();
+    } catch (error) {
+      pushNotice("error", errorMessage(error, "Xboxログイン / Java所有確認に失敗しました。"));
+    } finally {
+      scheduleProgressClear(operationId);
+      setBusyAction(null);
+    }
+  }
+
   async function handleDeleteProfile() {
     if (!selectedProfile) {
       return;
@@ -1440,6 +1430,7 @@ function App() {
       const result = await launcherApi.updateAppSettings(
         enabled,
         appSettings?.performanceLiteMode ?? "auto",
+        appSettings?.customJavaPath ?? null,
       );
       pushNotice("success", result.message);
       await refreshSettingsState();
@@ -1453,6 +1444,7 @@ function App() {
       const result = await launcherApi.updateAppSettings(
         appSettings?.tempCacheEnabled ?? true,
         mode,
+        appSettings?.customJavaPath ?? null,
       );
       pushNotice("success", result.message);
       await refreshSettingsState();
@@ -1473,6 +1465,42 @@ function App() {
     } finally {
       scheduleProgressClear(operationId);
       setBusyAction(null);
+    }
+  }
+
+  async function handleSelectCustomJavaPath() {
+    try {
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        filters: [{ name: "Java executable", extensions: ["exe"] }],
+      });
+      if (typeof selected !== "string") {
+        return;
+      }
+      const result = await launcherApi.updateAppSettings(
+        appSettings?.tempCacheEnabled ?? true,
+        appSettings?.performanceLiteMode ?? "auto",
+        selected,
+      );
+      pushNotice("success", result.message);
+      await refreshSettingsState();
+    } catch (error) {
+      pushNotice("error", errorMessage(error, "Java の直接指定を保存できませんでした。"));
+    }
+  }
+
+  async function handleClearCustomJavaPath() {
+    try {
+      const result = await launcherApi.updateAppSettings(
+        appSettings?.tempCacheEnabled ?? true,
+        appSettings?.performanceLiteMode ?? "auto",
+        null,
+      );
+      pushNotice("success", result.message);
+      await refreshSettingsState();
+    } catch (error) {
+      pushNotice("error", errorMessage(error, "Java の直接指定を解除できませんでした。"));
     }
   }
 
@@ -1690,6 +1718,19 @@ function App() {
       pushNotice("success", result.message);
       setLoaderNameTouched(false);
       await refreshLauncher(result.profileId);
+
+      // Fabric ローダーの場合は Fabric API を自動インストール
+      if (activeLoader === "fabric" && result.profileId) {
+        try {
+          const fabricApiOperationId = createOperationId("fabric-api-install");
+          await launcherApi.installProject(result.profileId, "P7dR8mSH", fabricApiOperationId);
+          pushNotice("success", "Fabric API を自動導入しました。");
+          await refreshLauncher(result.profileId);
+        } catch {
+          pushNotice("error", "Fabric API の自動導入に失敗しました。Modsタブから手動で追加してください。");
+        }
+      }
+
       setActiveView("play");
     } catch (error) {
       pushNotice(
@@ -1857,6 +1898,8 @@ function App() {
           modpackExportDialog={modpackExportDialog}
           progressDetailDialog={progressDetailDialog}
           progressDetailSnapshot={selectedProgressSnapshot}
+          localModImportOpen={localModImportOpen}
+          selectedProfileId={selectedProfile?.id ?? null}
           busyAction={busyAction}
           onCloseConfirmDialog={() => setConfirmDialog(null)}
           onConfirmDialog={() => void handleConfirmDialog()}
@@ -1894,6 +1937,14 @@ function App() {
             );
           }}
           onCloseProgressDetailDialog={() => setProgressDetailDialog(null)}
+          onCloseLocalModImport={() => setLocalModImportOpen(false)}
+          onLocalModImported={(message) => {
+            pushNotice("success", message);
+            if (selectedProfile) {
+              void refreshLauncher(selectedProfile.id);
+            }
+          }}
+          onLocalModError={(message) => pushNotice("error", message)}
         />
 
         <HeroPanel
@@ -1905,11 +1956,13 @@ function App() {
           openingLauncher={busyAction === "launcher"}
           switchingAccountLocalId={switchingAccountLocalId}
           scanningAccounts={busyAction?.startsWith("account-scan:") ?? false}
+          xboxLoggingIn={busyAction?.startsWith("xbox-login:") ?? false}
           scanProgress={accountScanProgress}
           onLaunch={() => void handleLaunchProfile()}
           onOpenOfficialLauncher={() => void handleOpenOfficialLauncher()}
           onSelectLauncherAccount={(localId) => handleSelectLauncherAccount(localId)}
           onScanLauncherAccounts={() => void handleScanLauncherAccounts()}
+          onXboxLogin={() => void handleXboxLoginAndJavaCheck()}
           onOpenGameDir={() => void openSelectedPath("game")}
           onOpenModsDir={() => void openSelectedPath("mods")}
           onEditProfileName={handleOpenProfileNameDialog}
@@ -1984,6 +2037,8 @@ function App() {
           onToggleTempCache={(enabled) => void handleToggleTempCache(enabled)}
           onChangePerformanceLiteMode={(mode) => void handleChangePerformanceLiteMode(mode)}
           onEnsureJavaRuntime={() => void handleEnsureJavaRuntime()}
+          onSelectCustomJavaPath={() => void handleSelectCustomJavaPath()}
+          onClearCustomJavaPath={() => void handleClearCustomJavaPath()}
           onRefreshStatus={() => void refreshSettingsState()}
           onClearTempCache={() => void handleClearTempCache()}
           onExportDebugLog={() => void handleExportDebugLog()}

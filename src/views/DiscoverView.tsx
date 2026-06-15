@@ -1,7 +1,9 @@
 import { formatLoader } from "../app/formatters";
 import { getProjectInstallState } from "../app/modMatching";
 import type { ModrinthProject, LauncherProfile } from "../app/types";
+import { useState } from "react";
 import { DiscoverResultRow } from "../components/DiscoverResultRow";
+import { ProjectDetailModal } from "../components/ProjectDetailModal";
 
 type DiscoverViewProps = {
   mode: "mods" | "modpacks";
@@ -32,6 +34,8 @@ export function DiscoverView({
   onProjectAction,
   onOpenProject,
 }: DiscoverViewProps) {
+  const [detailProject, setDetailProject] = useState<ModrinthProject | null>(null);
+
   const loaderLabel = profile ? formatLoader(profile.loader) : "未選択";
   const gameVersion = profile?.gameVersion ?? "未判定";
   const normalizedQuery = searchQuery.trim() === "0" ? "" : searchQuery.trim();
@@ -39,43 +43,22 @@ export function DiscoverView({
 
   return (
     <section className="workspace discover-workspace">
-      <div className="toolbar-card discover-toolbar">
-        <div className="section-copy">
-          <span className="section-kicker">Discover</span>
-          <h3>{searchingMods ? "直感的に Mod を探して入れる" : "Modpack から新しい構成を作る"}</h3>
-          <p>
-            {searchingMods
-              ? "選択中の起動構成に合わせて、Loader と Minecraft バージョンの条件をそのまま検索に使います。Modrinth 検索に加えて、CurseForge の projectID を入れれば直接導入もできます。"
-              : "Modrinth の modpack を探して、その pack 専用の新しい起動構成をこのランチャー内に作成できます。"}
-          </p>
-        </div>
-
-        <div className="discover-scope">
-          <article>
-            <span>{searchingMods ? "対象条件" : "動作"}</span>
-            <strong>
-              {searchingMods ? `${loaderLabel} / ${gameVersion}` : "新しい modpack 構成を作成"}
-            </strong>
-          </article>
-          <article>
-            <span>{searchingMods ? "起動構成" : "選択中の構成"}</span>
-            <strong>
+      {/* ===== ヘッダー ===== */}
+      <div className="discover-header panel">
+        <div className="discover-header-top">
+          <div>
+            <p className="eyebrow">Discover</p>
+            <h2 className="header-title">
+              {searchingMods ? "Mod を探す" : "Modpack を探す"}
+            </h2>
+            <p className="header-subtitle">
               {searchingMods
-                ? profile?.name ?? "起動構成を選択してください"
-                : profile?.name ?? "未選択でも作成できます"}
-            </strong>
-          </article>
-        </div>
-      </div>
+                ? `${loaderLabel} / ${gameVersion} に対応した Mod を Modrinth から検索します`
+                : "Modrinth の Modpack から新しい起動構成を作成します"}
+            </p>
+          </div>
 
-      <div className="toolbar-card">
-        <div className="section-copy">
-          <span className="section-kicker">対象</span>
-          <h3>探す内容を切り替える</h3>
-          <p>Mods は今の構成へ追加、Modpacks は新しい構成を作成します。</p>
-        </div>
-
-        <div className="toolbar-actions">
+          {/* Mode switcher */}
           <div className="segmented">
             <button
               type="button"
@@ -93,76 +76,86 @@ export function DiscoverView({
             </button>
           </div>
         </div>
-      </div>
 
-      <form
-        className="toolbar-card discover-search-shell"
-        onSubmit={(event) => {
-          event.preventDefault();
-          onSearch();
-        }}
-      >
-        <label className="discover-search-field">
-          <span>検索キーワード</span>
+        {/* ===== 検索バー ===== */}
+        <form
+          className="discover-search-bar"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onSearch();
+          }}
+        >
           <input
             value={searchQuery}
             onChange={(event) => onChangeQuery(event.currentTarget.value)}
+            className="discover-search-input"
             placeholder={
               searchingMods
-                ? "空欄か 0 でおすすめ / Sodium / Iris / JourneyMap / CurseForge の projectID..."
-                : "空欄か 0 で人気の modpack / Fabulously Optimized / Better MC..."
+                ? "🔍  Mod名を検索  /  CurseForge の projectID も使えます..."
+                : "🔍  Modpack名を検索..."
             }
           />
-        </label>
-        <button className="play-button compact" disabled={(searchingMods && !profile) || searching}>
-          {searching
-            ? "読込中..."
-            : normalizedQuery
-              ? "検索"
-              : searchingMods
-                ? "おすすめを見る"
-                : "人気 pack を見る"}
-        </button>
-      </form>
+          <button
+            type="submit"
+            className="play-button"
+            disabled={(searchingMods && !profile) || searching}
+          >
+            {searching
+              ? "検索中..."
+              : normalizedQuery
+                ? "検索"
+                : searchingMods
+                  ? "おすすめを見る"
+                  : "人気 Pack を見る"}
+          </button>
+        </form>
 
+        {/* 構成情報チップ */}
+        {profile ? (
+          <div className="discover-context-chips">
+            <span className="badge badge-loader">{loaderLabel}</span>
+            <span className="badge">{gameVersion}</span>
+            <span className="badge">{profile.name}</span>
+          </div>
+        ) : null}
+      </div>
+
+      {/* ===== 警告 ===== */}
       {performanceLite ? (
         <article className="empty-state warning">
-          <strong>軽量モードを有効化しています</strong>
-          <p>
-            低速回線または低スペック環境を検知したため、自動取得を抑えて手動検索を優先しています。
-          </p>
+          <strong>⚡ 軽量モード有効</strong>
+          <p>低速環境を検知しました。自動取得を抑えて手動検索を優先します。</p>
         </article>
       ) : null}
 
       {searchingMods && profile?.loader === "vanilla" ? (
         <article className="empty-state warning">
-          <strong>Vanilla 構成には Mod を直接導入できません</strong>
-          <p>
-            いまは Vanilla 構成です。Fabric / Forge / NeoForge / Quilt のいずれかを導入すると、
-            対応する Mod だけを絞ってそのままインストールできます。
-          </p>
+          <strong>⚠ Vanilla 構成には Mod を直接導入できません</strong>
+          <p>Fabric / Forge / NeoForge / Quilt のいずれかを導入すると対応 Mod を検索できます。</p>
         </article>
       ) : null}
 
+      {/* ===== 結果リスト ===== */}
       {results.length === 0 && !searching ? (
         <article className="empty-state">
-          <strong>{searchingMods ? "おすすめか検索結果がここに並びます" : "おすすめの Modpack がここに並びます"}</strong>
+          <strong>{searchingMods ? "検索結果がここに並びます" : "Modpack の検索結果がここに並びます"}</strong>
           <p>
             {searchingMods
-              ? "空欄のまま検索すると、現在の Loader とバージョンに合う人気 Mod を先に表示します。"
-              : "空欄のまま検索すると、Modrinth で人気の Modpack を先に表示します。"}
+              ? "空欄のまま検索すると、現在の Loader とバージョンに合う人気 Mod を表示します。"
+              : "空欄のまま検索すると、Modrinth で人気の Modpack を表示します。"}
           </p>
         </article>
       ) : (
-        <div className="discover-list">
+        <div className="discover-results">
           <div className="discover-results-header">
             <strong>
-              {normalizedQuery === "" ? "おすすめ" : "検索結果"} {results.length} 件
+              {normalizedQuery === "" ? "おすすめ" : "検索結果"}{" "}
+              {results.length} 件
             </strong>
             <span>
               {searchingMods
-                ? `${loaderLabel} / ${gameVersion} に合うものだけを表示しています。CurseForge は projectID 指定にも対応します。`
-                : "選んだ Modpack ごとに新しい起動構成を作成します。"}
+                ? `${loaderLabel} / ${gameVersion} に対応したものを表示中`
+                : "選択した Pack から新しい起動構成を作成します"}
             </span>
           </div>
 
@@ -188,9 +181,46 @@ export function DiscoverView({
                 }
                 onAction={() => onProjectAction(project)}
                 onOpenProject={() => onOpenProject(project.projectUrl)}
+                onOpenDetail={() => setDetailProject(project)}
               />
             );
           })}
+
+          {/* ===== 詳細モーダル ===== */}
+          {(() => {
+            if (!detailProject) return null;
+            const { installedMod, state } = getProjectInstallState(profile, detailProject);
+            const actionDisabled = searchingMods
+              ? !profile || profile.loader === "vanilla" || state === "installed" || state === "blocked"
+              : false;
+            const installLabel =
+              mode === "modpacks"
+                ? busyAction === `modpack:${detailProject.projectId}` ? "構成を作成中..." : "構成を作成"
+                : state === "blocked" ? "重複あり"
+                : actionDisabled ? "Loader 導入後"
+                : busyAction === `install:${detailProject.projectId}` || busyAction === `uninstall:${detailProject.projectId}` ? "処理中..."
+                : state === "update" ? "更新"
+                : state === "installed" ? "導入済み"
+                : Boolean(installedMod) ? "アンインストール"
+                : "インストール";
+            return (
+              <ProjectDetailModal
+                project={detailProject}
+                mode={mode}
+                installLabel={installLabel}
+                installDisabled={actionDisabled}
+                installed={searchingMods ? Boolean(installedMod) : false}
+                loading={
+                  busyAction === `install:${detailProject.projectId}` ||
+                  busyAction === `uninstall:${detailProject.projectId}` ||
+                  busyAction === `modpack:${detailProject.projectId}`
+                }
+                onClose={() => setDetailProject(null)}
+                onAction={() => { onProjectAction(detailProject); setDetailProject(null); }}
+                onOpenProject={() => onOpenProject(detailProject.projectUrl)}
+              />
+            );
+          })()}
         </div>
       )}
     </section>

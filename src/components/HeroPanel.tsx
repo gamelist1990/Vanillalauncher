@@ -17,11 +17,13 @@ type HeroPanelProps = {
   openingLauncher: boolean;
   switchingAccountLocalId?: string | null;
   scanningAccounts: boolean;
+  xboxLoggingIn: boolean;
   scanProgress?: ProgressState | null;
   onLaunch: () => void;
   onOpenOfficialLauncher: () => void;
   onSelectLauncherAccount: (localId: string) => Promise<boolean>;
   onScanLauncherAccounts: () => void;
+  onXboxLogin: () => void;
   onOpenGameDir: () => void;
   onOpenModsDir: () => void;
   onEditProfileName: () => void;
@@ -37,11 +39,13 @@ export function HeroPanel({
   openingLauncher,
   switchingAccountLocalId,
   scanningAccounts,
+  xboxLoggingIn,
   scanProgress,
   onLaunch,
   onOpenOfficialLauncher,
   onSelectLauncherAccount,
   onScanLauncherAccounts,
+  onXboxLogin,
   onOpenGameDir,
   onOpenModsDir,
   onEditProfileName,
@@ -170,11 +174,13 @@ export function HeroPanel({
         accounts={launcherAccounts}
         switchingLocalId={switchingAccountLocalId}
         scanning={scanningAccounts}
+        xboxLoggingIn={xboxLoggingIn}
         scanProgress={scanProgress}
         interactionDisabled={busy || openingLauncher}
         onClose={() => setAccountPanelOpen(false)}
         onSelectAccount={(localId) => void handleSelectAccount(localId)}
         onScanAccounts={onScanLauncherAccounts}
+        onXboxLogin={onXboxLogin}
         onOpenOfficialLauncher={onOpenOfficialLauncher}
       />
     </>

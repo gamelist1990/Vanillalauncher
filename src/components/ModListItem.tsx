@@ -54,9 +54,9 @@ export function ModListItem({
           onClick={onOpenSource}
           title={openSourceTitle}
         >
-          {remoteState?.iconUrl ? (
+          {(mod.iconData ?? remoteState?.iconUrl) ? (
             <img
-              src={remoteState.iconUrl}
+              src={(mod.iconData ?? remoteState?.iconUrl)!}
               alt=""
               className="mod-card-icon"
               loading="lazy"

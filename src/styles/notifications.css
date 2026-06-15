@@ -1,0 +1,55 @@
+/* Notification viewport */
+.notification-viewport {
+  position: fixed; bottom: 20px; right: 20px; z-index: 40;
+  width: min(360px, calc(100vw - 28px));
+  display: grid; gap: 10px; pointer-events: none;
+}
+
+.toast-item, .progress-toast {
+  pointer-events: auto; padding: 14px 16px;
+  border-radius: var(--radius-lg);
+  animation: toast-in 240ms var(--ease);
+}
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(12px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.toast-item {
+  display: grid; grid-template-columns: minmax(0,1fr) auto;
+  gap: 12px; align-items: start;
+  background: var(--surface-2); border: 1px solid var(--line-strong); box-shadow: var(--shadow-lg);
+}
+.toast-copy { display: grid; gap: 4px; }
+.toast-copy strong, .progress-toast-title { font-size: 0.9rem; font-weight: 600; color: var(--copy); }
+.toast-copy p, .progress-toast-detail { margin: 0; color: var(--copy-dim); line-height: 1.5; font-size: 0.84rem; }
+.toast-dismiss {
+  width: 28px; height: 28px; display: grid; place-items: center;
+  border-radius: var(--radius-sm); color: var(--copy-dim);
+  background: var(--surface-3); transition: background 150ms, color 150ms;
+}
+.toast-dismiss:hover { background: var(--surface-4); color: var(--copy); }
+
+.toast-success { background: var(--panel); border-color: var(--accent-mid); box-shadow: 0 0 0 1px var(--accent-soft), var(--shadow-lg); }
+.toast-error   { background: var(--panel); border-color: rgba(212,73,62,0.3);  box-shadow: 0 0 0 1px rgba(212,73,62,0.1), var(--shadow-lg); }
+.toast-info    { background: var(--panel); border-color: rgba(183,121,31,0.3); box-shadow: 0 0 0 1px rgba(183,121,31,0.1), var(--shadow-lg); }
+
+.progress-toast { background: var(--surface-2); border-color: var(--line-strong); box-shadow: var(--shadow-lg); }
+.progress-toast-button {
+  width: 100%; display: grid; text-align: left; overflow: hidden;
+  border-radius: var(--radius-lg);
+  transition: transform 150ms var(--ease), border-color 150ms, box-shadow 150ms, background 150ms;
+}
+.progress-toast-button:hover { transform: translateY(-1px); border-color: var(--accent-mid); background: var(--surface-3); box-shadow: var(--shadow-xl); }
+.progress-toast-button:focus-visible { outline: 2px solid var(--accent-mid); outline-offset: 2px; }
+.progress-toast-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 8px; }
+.progress-toast-kicker { color: var(--copy-muted); text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.65rem; }
+.progress-track { margin-top: 10px; height: 6px; overflow: hidden; border-radius: 999px; background: var(--surface-4); }
+.progress-fill {
+  height: 100%; border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent) 0%, #6aa84f 60%, #8dbf67 100%);
+  transition: width 200ms var(--ease);
+  box-shadow: 0 0 8px rgba(59,133,38,0.32);
+}
+.progress-toast-foot { margin-top: 10px; display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--copy-dim); font-size: 0.74rem; line-height: 1.45; }
+.progress-toast-open { color: var(--info); font-weight: 600; white-space: nowrap; }

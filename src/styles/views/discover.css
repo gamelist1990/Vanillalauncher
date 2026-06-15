@@ -1,0 +1,291 @@
+/* =====================================================
+   Discover View
+   ===================================================== */
+
+/* ---- Header ---- */
+.discover-header { display: grid; gap: 16px; }
+.discover-header-top {
+  display: flex; align-items: flex-start;
+  justify-content: space-between; gap: 16px; flex-wrap: wrap;
+}
+.discover-search-bar { display: flex; gap: 10px; align-items: center; }
+.discover-search-input {
+  flex: 1 1 0; min-width: 0; padding: 14px 18px;
+  border-radius: var(--radius-lg); background: var(--surface-1);
+  border: 1px solid var(--line); color: var(--copy);
+  font-size: 0.95rem; transition: border-color 150ms, box-shadow 150ms;
+}
+.discover-search-input:focus {
+  outline: none;
+  border-color: var(--accent-mid);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.discover-context-chips { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+/* ---- Card List ---- */
+.discover-list {
+  display: grid;
+  gap: 12px;
+}
+
+/* =====================================================
+   Result Card
+   ===================================================== */
+.discover-result-row {
+  display: grid;
+  grid-template-columns: 160px 1fr auto;
+  gap: 0;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--line);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-xs);
+  overflow: hidden;
+  transition:
+    transform 150ms var(--ease),
+    border-color 150ms var(--ease),
+    box-shadow 150ms var(--ease);
+}
+.discover-result-row:hover {
+  transform: translateY(-2px);
+  border-color: var(--accent-mid);
+  box-shadow: var(--shadow);
+}
+
+/* ---- Visual (left thumbnail column) ---- */
+.discover-result-visual {
+  position: relative;
+  width: 160px;
+  flex-shrink: 0;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+.discover-preview {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.discover-preview-hero {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.discover-preview-fallback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, var(--surface-3) 0%, var(--surface-4) 100%);
+  font-size: 2.5rem;
+  font-weight: 800;
+  color: var(--copy-muted);
+  font-family: var(--display);
+  letter-spacing: -0.03em;
+  user-select: none;
+}
+.discover-preview-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to right,
+    transparent 50%,
+    var(--surface-1) 100%
+  );
+  pointer-events: none;
+  opacity: 0.55;
+}
+
+/* ---- Icon badge floating on the visual ---- */
+.discover-icon-frame {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  z-index: 2;
+}
+.discover-project-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-sm);
+  border: 2px solid var(--surface-1);
+  object-fit: cover;
+  box-shadow: var(--shadow-sm);
+  background: var(--surface-3);
+}
+.project-icon.fallback {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-sm);
+  border: 2px solid var(--surface-1);
+  background: var(--surface-4);
+  display: grid;
+  place-items: center;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--copy-muted);
+  box-shadow: var(--shadow-sm);
+}
+
+/* ---- State pill ---- */
+.discover-state-pill {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 3;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border: 1px solid transparent;
+  backdrop-filter: blur(4px);
+}
+.discover-state-pill.is-ready {
+  background: rgba(255,255,255,0.82);
+  border-color: var(--accent-mid);
+  color: var(--accent-strong);
+}
+.discover-state-pill.is-installed {
+  background: rgba(255,255,255,0.82);
+  border-color: var(--line-strong);
+  color: var(--copy-dim);
+}
+
+/* ---- Copy (center content) ---- */
+.discover-result-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  min-width: 0;
+}
+
+/* ---- Heading row ---- */
+.discover-result-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.discover-identity strong {
+  display: block;
+  font-size: 0.97rem;
+  font-weight: 700;
+  color: var(--copy);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 28ch;
+}
+.discover-identity span {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--copy-muted);
+  margin-top: 2px;
+}
+.discover-inline-stats {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  flex-shrink: 0;
+}
+.discover-inline-stats span {
+  font-size: 0.74rem;
+  color: var(--copy-muted);
+  white-space: nowrap;
+}
+.discover-inline-stats span::before {
+  content: '';
+}
+.discover-inline-stats span + span::before {
+  content: '·';
+  margin-right: 6px;
+  color: var(--line-strong);
+}
+
+/* ---- Description ---- */
+.discover-description {
+  margin: 0;
+  color: var(--copy-dim);
+  font-size: 0.85rem;
+  line-height: 1.6;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ---- Footer (tags + mini-meta) ---- */
+.discover-result-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: auto;
+}
+.discover-mini-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  flex-shrink: 0;
+}
+.discover-mini-meta span {
+  font-size: 0.72rem;
+  color: var(--copy-muted);
+  background: var(--surface-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+
+/* ---- Actions (right column) ---- */
+.discover-result-actions {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px 16px;
+  border-left: 1px solid var(--line);
+  background: var(--surface-2);
+  min-width: 130px;
+}
+.discover-result-actions .link-button {
+  font-size: 0.78rem;
+  text-align: center;
+  white-space: nowrap;
+}
+.discover-result-actions .play-button,
+.discover-result-actions .danger-button {
+  white-space: nowrap;
+  width: 100%;
+}
+
+/* ---- Responsive: compact on narrow viewports ---- */
+@media (max-width: 640px) {
+  .discover-result-row {
+    grid-template-columns: 100px 1fr;
+    grid-template-rows: 1fr auto;
+  }
+  .discover-result-actions {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    border-left: none;
+    border-top: 1px solid var(--line);
+    padding: 10px 14px;
+    background: var(--surface-2);
+  }
+  .discover-result-actions .play-button,
+  .discover-result-actions .danger-button {
+    flex: 1;
+  }
+  .discover-result-visual {
+    width: 100px;
+  }
+}

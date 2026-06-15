@@ -1,0 +1,90 @@
+/* Header bar */
+.header-bar {
+  display: flex; align-items: end; justify-content: space-between;
+  gap: 16px; min-width: 0; flex-wrap: wrap;
+  padding-bottom: 4px; border-bottom: 1px solid var(--line);
+}
+.header-main,
+.menu-toggle-box { display: flex; }
+.header-main { flex: 1 1 auto; align-items: center; gap: 14px; min-width: 0; }
+
+.menu-toggle, .sidebar-dismiss {
+  flex: 0 0 auto; display: grid; place-items: center;
+  border-radius: var(--radius); border: 1px solid var(--line);
+  background: var(--surface-2); color: var(--copy);
+}
+.menu-toggle { width: 44px; height: 44px; padding: 0; }
+.menu-toggle-box { width: 16px; flex-direction: column; gap: 3.5px; }
+.menu-toggle-box span {
+  display: block; width: 100%; height: 2px;
+  border-radius: 999px; background: var(--copy);
+  transform-origin: center;
+  transition: transform 160ms var(--ease), opacity 160ms var(--ease);
+}
+.menu-toggle.is-open .menu-toggle-box span:nth-child(1) { transform: translateY(5.5px) rotate(45deg); }
+.menu-toggle.is-open .menu-toggle-box span:nth-child(2) { opacity: 0; }
+.menu-toggle.is-open .menu-toggle-box span:nth-child(3) { transform: translateY(-5.5px) rotate(-45deg); }
+.sidebar-dismiss { width: 38px; height: 38px; color: var(--copy-dim); font-weight: 700; align-self: start; }
+
+.header-copy, .header-actions,
+.section-copy, .hero-copy,
+.loader-feature-copy, .loader-feature-meta,
+.toolbar-actions, .discover-scope { min-width: 0; }
+
+.section-copy h3, .hero-copy h2, .loader-feature-copy h3,
+.discover-identity strong, .loader-sidebar-copy h4 { overflow-wrap: anywhere; word-break: normal; line-height: 1.1; }
+
+.header-copy h1, .hero-copy h2, .section-copy h3, .loader-feature-copy h3,
+.loader-sidebar-copy h4, .mod-card-title strong, .profile-chip strong,
+.play-button, .secondary-button, .danger-button, .discover-identity strong { font-family: var(--display); }
+
+.header-copy h1, .hero-copy h2, .section-copy h3, .loader-feature-copy h3 { margin: 0; color: var(--copy); }
+.header-copy h1, .hero-copy h2 { font-size: clamp(1.5rem,2vw,2rem); font-weight: 800; letter-spacing: -0.03em; }
+
+.eyebrow, .section-kicker {
+  margin: 0 0 6px; color: var(--accent);
+  font-weight: 600; font-size: 0.68rem;
+  letter-spacing: 0.12em; text-transform: uppercase;
+}
+.header-actions { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; justify-content: flex-end; }
+.header-select { display: grid; gap: 6px; min-width: min(100%,340px); flex: 1 1 300px; }
+
+/* Header additions */
+.header-accent-bar { width: 4px; height: 32px; border-radius: 999px; flex: 0 0 auto; box-shadow: 0 0 10px currentColor; }
+.header-title-group { display: grid; gap: 2px; }
+.header-title {
+  font-size: clamp(1.2rem,1.8vw,1.6rem); font-weight: 800;
+  color: var(--copy); margin: 0; letter-spacing: -0.02em;
+  line-height: 1.1; font-family: var(--display);
+}
+.header-subtitle { margin: 0; font-size: 0.78rem; color: var(--copy-dim); font-weight: 400; line-height: 1.4; }
+.header-copy { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.header-profile-selector { display: grid; gap: 4px; min-width: 220px; }
+.header-profile-label { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--copy-muted); }
+.header-icon-btn {
+  width: 38px; height: 38px; display: grid; place-items: center;
+  border-radius: var(--radius); border: 1px solid var(--line);
+  background: var(--surface-3); color: var(--copy-dim);
+  font-size: 1.1rem; cursor: pointer; flex: 0 0 auto;
+  transition: background 150ms var(--ease), color 150ms var(--ease), border-color 150ms var(--ease), transform 200ms var(--ease);
+}
+.header-icon-btn:hover { background: var(--surface-4); color: var(--copy); border-color: var(--line-strong); transform: rotate(180deg); }
+
+.section-copy { min-width: 0; }
+.section-copy h3 { font-size: 1.1rem; font-weight: 700; color: var(--copy); margin: 0; }
+
+.brand-block span,
+.nav-item span,
+.sidebar-label,
+.eyebrow,
+.section-kicker,
+.panel-heading small,
+.panel-heading span,
+.mod-row-title span,
+.loader-detail,
+.hero-text,
+.empty-state p,
+.header-select span,
+.discover-inline-stats,
+.discover-mini-meta,
+.discover-results-header span { color: var(--copy-dim); }

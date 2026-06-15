@@ -14,5 +14,3 @@ Tauri + React + TypeScript を組み合わせた Minecraft ランチャーの開
 - リリース一覧（ダウンロード）: https://github.com/gamelist1990/Vanillalauncher/releases
 - 毎コミットの prerelease (タグ: pre-release): https://github.com/gamelist1990/Vanillalauncher/releases/tag/pre-release
 - 安定版リリース (タグ: release): https://github.com/gamelist1990/Vanillalauncher/releases/tag/release
-
----

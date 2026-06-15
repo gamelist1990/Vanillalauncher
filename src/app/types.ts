@@ -101,6 +101,8 @@ export type InstalledMod = {
   enabled: boolean;
   sizeBytes: number;
   modifiedAt?: number | null;
+  /** JAR から抽出したアイコンの base64 Data URI */
+  iconData?: string | null;
 };
 
 export type ModRemoteState = {
@@ -169,6 +171,34 @@ export type ModpackVersionSummary = {
 export type ActionResult = {
   message: string;
   fileName: string;
+};
+
+export type LocalModDependency = {
+  modId: string;
+  requirement: string;
+  required: boolean;
+  satisfied: boolean;
+  note: string;
+};
+
+export type LocalModAnalysis = {
+  filePath: string;
+  fileName: string;
+  displayName: string;
+  modId?: string | null;
+  version?: string | null;
+  description?: string | null;
+  loader?: string | null;
+  authors: string[];
+  compatible: boolean;
+  action: "install" | "replace" | "skip" | "reject" | string;
+  severity: "ok" | "warning" | "error" | string;
+  summary: string;
+  dependencies: LocalModDependency[];
+  existingFileName?: string | null;
+  existingVersion?: string | null;
+  /** JAR から抽出したアイコンの base64 Data URI */
+  iconData?: string | null;
 };
 
 export type LaunchResult = {
@@ -244,6 +274,7 @@ export type NavigationItem = {
 export type AppSettings = {
   tempCacheEnabled: boolean;
   performanceLiteMode: "auto" | "on" | "off";
+  customJavaPath?: string | null;
 };
 
 export type SoftwareStatus = {
@@ -251,6 +282,7 @@ export type SoftwareStatus = {
   cacheDir: string;
   settingsPath: string;
   javaRuntimeDir: string;
+  customJavaPath?: string | null;
   tempCacheEnabled: boolean;
   cacheFileCount: number;
   cacheTotalBytes: number;

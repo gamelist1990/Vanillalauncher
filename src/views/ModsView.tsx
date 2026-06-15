@@ -87,103 +87,104 @@ export function ModsView({
 
   return (
     <section className="workspace mods-workspace">
-      <div className="toolbar-card">
-        <div className="section-copy">
-          <span className="section-kicker">Mod 管理</span>
-          <h3>導入済み Mod</h3>
-          <p>
-            起動構成ごとに分離された Mod を表示します。Modrinth と CurseForge の追跡 Mod は、
-            ここからリンク確認や更新チェックもまとめて扱えます。
-          </p>
-
-          <div className="mods-summary-strip" role="list" aria-label="Mod の概要">
-            <article className="mods-summary-item" role="listitem">
-              <span>この構成の mods</span>
-              <strong>{totalMods}</strong>
-            </article>
-            <article className="mods-summary-item" role="listitem">
-              <span>有効 / 無効</span>
-              <strong>
-                {enabledMods} / {disabledMods}
-              </strong>
-            </article>
-            <article className="mods-summary-item" role="listitem">
-              <span>追跡中</span>
-              <strong>{trackedCount}</strong>
-            </article>
+      {/* ===== フィルターバー ===== */}
+      <div className="toolbar-card mods-toolbar">
+        {/* 左: タイトル＋スタッツ */}
+        <div className="mods-toolbar-left">
+          <div className="mods-stat-chips">
+            <span className="mods-stat-chip">
+              <span className="mods-stat-num">{totalMods}</span>
+              <span className="mods-stat-label">Mod</span>
+            </span>
+            <span className="mods-stat-chip mods-stat-chip--on">
+              <span className="mods-stat-num">{enabledMods}</span>
+              <span className="mods-stat-label">有効</span>
+            </span>
+            <span className="mods-stat-chip mods-stat-chip--off">
+              <span className="mods-stat-num">{disabledMods}</span>
+              <span className="mods-stat-label">無効</span>
+            </span>
+            <span className="mods-stat-chip">
+              <span className="mods-stat-num">{trackedCount}</span>
+              <span className="mods-stat-label">追跡中</span>
+            </span>
+            <span className="mods-stat-chip">
+              <span className="mods-stat-num">{trackedCount}</span>
+              <span className="mods-stat-label">追跡中</span>
+            </span>
+            {updatableCount > 0 ? (
+              <span className="mods-stat-chip mods-stat-chip--update">
+                <span className="mods-stat-num">{updatableCount}</span>
+                <span className="mods-stat-label">更新可能</span>
+              </span>
+            ) : null}
           </div>
         </div>
 
-        <div className="toolbar-actions">
-          <div className="segmented">
-            <button
-              className={filter === "all" ? "is-active" : ""}
-              onClick={() => setFilter("all")}
-            >
-              すべて
-            </button>
-            <button
-              className={filter === "enabled" ? "is-active" : ""}
-              onClick={() => setFilter("enabled")}
-            >
-              有効
-            </button>
-            <button
-              className={filter === "disabled" ? "is-active" : ""}
-              onClick={() => setFilter("disabled")}
-            >
-              無効
-            </button>
-          </div>
-
+        {/* 中: 検索＋フィルター */}
+        <div className="mods-toolbar-center">
           <input
             value={query}
             onChange={(event) => setQuery(event.currentTarget.value)}
             className="toolbar-search"
-            placeholder="Mod 名や ID で絞り込み"
+            placeholder="🔍  Mod名・ID・説明で検索..."
           />
-
-          <div className="mods-remote-status">
-            <span>更新ステータス</span>
-            <strong>
-              {loadingRemoteStates
-                ? remoteFetchTotal > 0
-                  ? `${remoteFetchDone} / ${remoteFetchTotal} 取得中`
-                  : "チェックしています"
-                : `${updatableCount} 件更新可能`}
-            </strong>
-            <small>最終確認: {checkedAtLabel}</small>
-            <button
-              className="secondary-button"
-              onClick={onCheckUpdates}
-              disabled={!profile || loadingRemoteStates || checkingUpdates}
-            >
-              {checkingUpdates ? "更新チェック中..." : "更新チェック"}
+          <div className="segmented">
+            <button className={filter === "all" ? "is-active" : ""} onClick={() => setFilter("all")}>
+              すべて
             </button>
-            <button
-              className="play-button mods-bulk-update"
-              onClick={onUpdateAll}
-              disabled={!profile || loadingRemoteStates || checkingUpdates || updatableCount === 0 || updatingAll}
-            >
-              {updatingAll ? "すべて更新中..." : "すべて更新"}
+            <button className={filter === "enabled" ? "is-active" : ""} onClick={() => setFilter("enabled")}>
+              有効
+            </button>
+            <button className={filter === "disabled" ? "is-active" : ""} onClick={() => setFilter("disabled")}>
+              無効
             </button>
           </div>
+        </div>
 
-          <button className="secondary-button" onClick={onImportLocalMod} disabled={!profile}>
-            Mod を追加
+        {/* 右: アクション */}
+        <div className="mods-toolbar-right">
+          <div className="mods-update-status">
+            {loadingRemoteStates ? (
+              <span className="mods-update-label">
+                {remoteFetchTotal > 0 ? `${remoteFetchDone} / ${remoteFetchTotal} 取得中` : "チェック中"}
+              </span>
+            ) : (
+              <span className="mods-update-label">最終確認: {checkedAtLabel}</span>
+            )}
+          </div>
+          <button
+            className="secondary-button compact"
+            onClick={onCheckUpdates}
+            disabled={!profile || loadingRemoteStates || checkingUpdates}
+          >
+            {checkingUpdates ? "チェック中..." : "更新チェック"}
           </button>
-          <button className="secondary-button" onClick={onOpenModsDir} disabled={!profile}>
-            この構成の mods
+          {updatableCount > 0 ? (
+            <button
+              className="play-button compact"
+              onClick={onUpdateAll}
+              disabled={!profile || loadingRemoteStates || updatingAll}
+            >
+              {updatingAll ? "更新中..." : `${updatableCount}件更新`}
+            </button>
+          ) : null}
+          <button className="secondary-button compact" onClick={onImportLocalMod} disabled={!profile}>
+            ＋ 追加
           </button>
-          <button className="secondary-button" onClick={onOpenGameDir} disabled={!profile}>
+          <button className="secondary-button compact" onClick={onOpenModsDir} disabled={!profile}>
+            Modsフォルダ
+          </button>
+          <button className="secondary-button compact" onClick={onOpenGameDir} disabled={!profile}>
             ゲームフォルダ
           </button>
         </div>
       </div>
 
+      {/* ===== 重複警告 ===== */}
       {profile && duplicateGroups.length > 0 ? (
         <article className="empty-state warning duplicate-warning">
-          <strong>重複している Mod を検知しました</strong>
+          <strong>⚠ 重複している Mod を検知しました</strong>
           <p>
             同じ Mod が {duplicateGroups.length} グループ、合計 {duplicateCount} 件見つかりました。
             片方は削除し、バージョン違いなら更新を使って整理してください。
@@ -191,6 +192,7 @@ export function ModsView({
         </article>
       ) : null}
 
+      {/* ===== Modリスト ===== */}
       {!profile ? (
         <article className="empty-state">
           <strong>起動構成が未選択です</strong>
@@ -199,12 +201,11 @@ export function ModsView({
       ) : filteredMods.length === 0 ? (
         <article className="empty-state">
           <strong>表示できる Mod がありません</strong>
-          <p>Discover から導入するか、mods フォルダへ `.jar` を追加するとここに反映されます。</p>
+          <p>Discover から導入するか、mods フォルダへ .jar を追加するとここに反映されます。</p>
         </article>
       ) : (
         <div className="mod-list">
           {filteredMods.map((mod) => (
-            
             <ModListItem
               key={mod.fileName}
               mod={mod}

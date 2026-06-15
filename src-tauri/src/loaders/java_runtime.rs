@@ -1,6 +1,7 @@
 use crate::{progress::emit_progress, settings};
 use std::{
     fs::{self, File},
+    io,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -20,6 +21,16 @@ fn suppress_console_window(command: &mut Command) {
 }
 
 pub(super) fn find_game_java_executable() -> Result<PathBuf, String> {
+    if let Some(java) = custom_java_executable()? {
+        if cfg!(target_os = "windows") {
+            let javaw = java.with_file_name("javaw.exe");
+            if javaw.exists() {
+                return Ok(javaw);
+            }
+        }
+        return Ok(java);
+    }
+
     if cfg!(target_os = "windows") {
         let java = ensure_managed_java_runtime(None)?;
         let javaw = java.with_file_name("javaw.exe");
@@ -41,6 +52,10 @@ pub(super) fn find_game_java_executable() -> Result<PathBuf, String> {
 }
 
 pub(super) fn find_java_executable() -> Result<PathBuf, String> {
+    if let Some(java) = custom_java_executable()? {
+        return Ok(java);
+    }
+
     if cfg!(target_os = "windows") {
         return ensure_managed_java_runtime(None);
     }
@@ -50,6 +65,18 @@ pub(super) fn find_java_executable() -> Result<PathBuf, String> {
     }
 
     install_java_runtime(None)
+}
+
+fn custom_java_executable() -> Result<Option<PathBuf>, String> {
+    let settings = settings::load_settings();
+    let Some(path) = settings.custom_java_path.as_deref() else {
+        return Ok(None);
+    };
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    settings::validate_custom_java_path(trimmed).map(Some)
 }
 
 pub(super) fn ensure_java_runtime_available_with_progress(
@@ -203,13 +230,7 @@ fn install_java_runtime(progress: Option<(&AppHandle, &str)>) -> Result<PathBuf,
         );
     }
 
-    let archive_file = File::open(&archive_path)
-        .map_err(|error| format!("{} を開けませんでした: {error}", archive_path.display()))?;
-    let mut archive = ZipArchive::new(archive_file)
-        .map_err(|error| format!("Java アーカイブを開けませんでした: {error}"))?;
-    archive
-        .extract(&install_dir)
-        .map_err(|error| format!("Java を展開できませんでした: {error}"))?;
+    extract_java_runtime_archive(&archive_path, &install_dir, progress)?;
 
     let _ = fs::remove_file(&archive_path);
 
@@ -260,6 +281,64 @@ fn download_java_runtime_archive(target_path: &Path) -> Result<(), String> {
     Err(format!("Java のダウンロードに失敗しました: {detail}"))
 }
 
+fn extract_java_runtime_archive(
+    archive_path: &Path,
+    install_dir: &Path,
+    progress: Option<(&AppHandle, &str)>,
+) -> Result<(), String> {
+    let archive_file = File::open(archive_path)
+        .map_err(|error| format!("{} を開けませんでした: {error}", archive_path.display()))?;
+    let mut archive = ZipArchive::new(archive_file)
+        .map_err(|error| format!("Java アーカイブを開けませんでした: {error}"))?;
+    let total_entries = archive.len().max(1);
+
+    for index in 0..archive.len() {
+        let mut entry = archive
+            .by_index(index)
+            .map_err(|error| format!("Java アーカイブ内のファイルを読み取れませんでした: {error}"))?;
+        let Some(enclosed_name) = entry.enclosed_name().map(|path| path.to_owned()) else {
+            continue;
+        };
+        let output_path = install_dir.join(enclosed_name);
+
+        if entry.is_dir() {
+            fs::create_dir_all(&output_path).map_err(|error| {
+                format!("{} を作成できませんでした: {error}", output_path.display())
+            })?;
+        } else {
+            if let Some(parent) = output_path.parent() {
+                fs::create_dir_all(parent).map_err(|error| {
+                    format!("{} を作成できませんでした: {error}", parent.display())
+                })?;
+            }
+
+            let mut output_file = File::create(&output_path).map_err(|error| {
+                format!("{} を作成できませんでした: {error}", output_path.display())
+            })?;
+            io::copy(&mut entry, &mut output_file).map_err(|error| {
+                format!("{} を展開できませんでした: {error}", output_path.display())
+            })?;
+        }
+
+        if let Some((app, operation_id)) = progress {
+            let extracted = index + 1;
+            let percent = 72.0 + ((extracted as f64 / total_entries as f64) * 24.0);
+            emit_progress(
+                app,
+                operation_id,
+                "Java ランタイムを準備中",
+                format!(
+                    "Java ランタイムを展開しています。{} / {} ファイルを処理しました。",
+                    extracted, total_entries
+                ),
+                percent.min(96.0),
+            );
+        }
+    }
+
+    Ok(())
+}
+
 fn java_runtime_install_dir() -> PathBuf {
     settings::java_runtime_dir()
 }
@@ -280,14 +359,16 @@ fn discover_java_in_directory(dir: &Path) -> Option<PathBuf> {
         "java"
     };
 
-    let preferred_path = find_executable_recursively(dir, preferred)?;
-    if preferred_path.exists() {
-        return Some(preferred_path);
+    if let Some(preferred_path) = find_executable_recursively(dir, preferred) {
+        if preferred_path.exists() {
+            return Some(preferred_path);
+        }
     }
 
-    let fallback_path = find_executable_recursively(dir, fallback)?;
-    if fallback_path.exists() {
-        return Some(fallback_path);
+    if let Some(fallback_path) = find_executable_recursively(dir, fallback) {
+        if fallback_path.exists() {
+            return Some(fallback_path);
+        }
     }
 
     None

@@ -80,6 +80,8 @@ pub struct InstalledMod {
     pub enabled: bool,
     pub size_bytes: u64,
     pub modified_at: Option<u64>,
+    /// JAR から読み出してキャッシュ済みのアイコン base64 Data URI
+    pub icon_data: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -103,6 +105,38 @@ pub struct ModRemoteState {
 pub struct ActionResult {
     pub message: String,
     pub file_name: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalModDependency {
+    pub mod_id: String,
+    pub requirement: String,
+    pub required: bool,
+    pub satisfied: bool,
+    pub note: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalModAnalysis {
+    pub file_path: String,
+    pub file_name: String,
+    pub display_name: String,
+    pub mod_id: Option<String>,
+    pub version: Option<String>,
+    pub description: Option<String>,
+    pub loader: Option<String>,
+    pub authors: Vec<String>,
+    pub compatible: bool,
+    pub action: String,
+    pub severity: String,
+    pub summary: String,
+    pub dependencies: Vec<LocalModDependency>,
+    pub existing_file_name: Option<String>,
+    pub existing_version: Option<String>,
+    /// JAR から抽出したアイコンの base64 データ URI (例: "data:image/png;base64,...")
+    pub icon_data: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

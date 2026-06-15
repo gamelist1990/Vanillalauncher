@@ -16,6 +16,7 @@ type DiscoverResultRowProps = {
   loading: boolean;
   onAction: () => void;
   onOpenProject: () => void;
+  onOpenDetail: () => void;
 };
 
 export function DiscoverResultRow({
@@ -27,6 +28,7 @@ export function DiscoverResultRow({
   loading,
   onAction,
   onOpenProject,
+  onOpenDetail,
 }: DiscoverResultRowProps) {
   const [previewFailed, setPreviewFailed] = useState(false);
   const [iconFailed, setIconFailed] = useState(false);
@@ -55,7 +57,15 @@ export function DiscoverResultRow({
   const openLabel = project.source === "curseforge" ? "CurseForge を開く" : "Modrinth を開く";
 
   return (
-    <article className="discover-result-row">
+    <article
+      className="discover-result-row"
+      onClick={onOpenDetail}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onOpenDetail(); }}
+      aria-label={`${project.title} の詳細を表示`}
+      style={{ cursor: "pointer" }}
+    >
       <div className="discover-result-visual">
         {previewImage && !previewFailed ? (
           <img
@@ -138,7 +148,12 @@ export function DiscoverResultRow({
         </div>
       </div>
 
-      <div className="discover-result-actions">
+      <div
+        className="discover-result-actions"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.stopPropagation()}
+        role="none"
+      >
         <button className="link-button" type="button" onClick={onOpenProject}>
           {openLabel}
         </button>

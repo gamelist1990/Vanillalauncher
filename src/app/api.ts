@@ -7,6 +7,7 @@ import type {
   FabricInstallResult,
   InstallResult,
   LaunchResult,
+  LocalModAnalysis,
   LoaderCatalog,
   LoaderId,
   LoaderInstallResult,
@@ -110,6 +111,10 @@ export const launcherApi = {
     invoke<ActionResult>("set_mod_enabled", { profileId, fileName, enabled }),
   importLocalMod: (profileId: string, modPath: string) =>
     invoke<ActionResult>("import_local_mod", { profileId, modPath }),
+  analyzeLocalMod: (profileId: string, modPath: string) =>
+    invoke<LocalModAnalysis>("analyze_local_mod", { profileId, modPath }),
+  importCheckedLocalMod: (profileId: string, modPath: string) =>
+    invoke<ActionResult>("import_checked_local_mod", { profileId, modPath }),
   removeMod: (profileId: string, fileName: string) =>
     invoke<ActionResult>("remove_mod", { profileId, fileName }),
   resolveProfilePath: (profileId: string, target: "game" | "mods") =>
@@ -158,8 +163,9 @@ export const launcherApi = {
   updateAppSettings: (
     tempCacheEnabled: boolean,
     performanceLiteMode: AppSettings["performanceLiteMode"],
+    customJavaPath?: string | null,
   ) =>
-    invoke<ActionResult>("update_app_settings", { tempCacheEnabled, performanceLiteMode }),
+    invoke<ActionResult>("update_app_settings", { tempCacheEnabled, performanceLiteMode, customJavaPath }),
   ensureJavaRuntimeAvailable: (operationId?: string) =>
     invoke<ActionResult>("ensure_java_runtime_available", { operationId }),
   clearTempCache: () => invoke<ActionResult>("clear_temp_cache"),

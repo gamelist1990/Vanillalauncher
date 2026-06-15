@@ -1,35 +1,55 @@
+/* =====================================================
+  Play Profile Cards — Warm Light Theme
+   ===================================================== */
+
+.play-workspace {
+  display: grid;
+  gap: 20px;
+}
+
+/* =========================================
+   Profile Card Grid
+   ========================================= */
+
 .play-profile-cards {
   display: grid;
-  gap: 14px;
+  gap: 16px;
   grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr));
 }
 
 .play-profile-card {
   min-width: 0;
-  border-radius: 18px;
+  border-radius: var(--radius-lg);
   border: 1px solid var(--line);
-  background: rgba(20, 24, 32, 0.94);
-  color: #eef3f9;
+  background: var(--surface-2);
+  color: var(--copy);
   overflow: hidden;
   cursor: pointer;
-  transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+  transition:
+    transform 150ms var(--ease),
+    border-color 150ms var(--ease),
+    box-shadow 150ms var(--ease);
 }
 
 .play-profile-card:hover {
-  transform: translateY(-2px);
-  border-color: rgba(88, 154, 255, 0.3);
-  box-shadow: 0 14px 28px rgba(9, 14, 22, 0.35);
+  transform: translateY(-3px);
+  border-color: var(--accent-mid);
+  box-shadow: var(--shadow-lg);
 }
 
 .play-profile-card.is-selected {
-  border-color: rgba(74, 168, 92, 0.44);
-  box-shadow: 0 14px 30px rgba(74, 168, 92, 0.2);
+  border-color: var(--accent-mid);
+  box-shadow: 0 0 0 1px var(--accent-soft), var(--shadow-lg);
 }
+
+/* =========================================
+   Card Visual Area
+   ========================================= */
 
 .play-profile-visual {
   position: relative;
-  min-height: 204px;
-  background: center / cover no-repeat;
+  min-height: 180px;
+  background: var(--surface-3) center / cover no-repeat;
   display: grid;
   align-content: space-between;
   padding: 10px;
@@ -38,13 +58,17 @@
 .play-profile-top {
   display: flex;
   justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .play-profile-top .badge {
-  background: rgba(15, 19, 26, 0.62);
-  color: #f1f4fa;
-  border-color: rgba(241, 244, 250, 0.2);
+  background: rgba(255, 248, 238, 0.82);
+  color: var(--copy);
+  border-color: var(--line-strong);
+  backdrop-filter: blur(4px);
+  font-size: 0.7rem;
+  font-weight: 600;
 }
 
 .play-profile-icon-wrap {
@@ -53,20 +77,26 @@
 }
 
 .play-profile-icon {
-  width: 86px;
-  height: 86px;
-  border-radius: 16px;
+  width: 72px;
+  height: 72px;
+  border-radius: var(--radius);
   object-fit: cover;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background: rgba(16, 20, 26, 0.75);
+  border: 2px solid rgba(255, 255, 255, 0.8);
+  background: var(--surface-3);
+  box-shadow: var(--shadow);
 }
+
+/* =========================================
+   Overlay Action Buttons
+   ========================================= */
 
 .play-profile-overlay-actions {
   display: flex;
-  gap: 8px;
+  gap: 6px;
+  flex-wrap: wrap;
   opacity: 0;
-  transform: translateY(8px);
-  transition: opacity 140ms ease, transform 140ms ease;
+  transform: translateY(6px);
+  transition: opacity 150ms var(--ease), transform 150ms var(--ease);
 }
 
 .play-profile-card:hover .play-profile-overlay-actions,
@@ -78,28 +108,50 @@
 
 .play-profile-overlay-actions > button {
   flex: 1 1 auto;
-  min-height: 40px;
-  padding: 8px 12px;
+  min-height: 36px;
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  backdrop-filter: blur(8px);
 }
 
+.play-profile-overlay-actions .play-button {
+  background: rgba(59, 133, 38, 0.92);
+  border-color: rgba(59, 133, 38, 0.55);
+}
+
+.play-profile-overlay-actions .secondary-button {
+  background: rgba(255, 248, 238, 0.88);
+  border-color: var(--line-strong);
+  color: var(--copy);
+}
+
+/* =========================================
+   Card Footer (name + mod count)
+   ========================================= */
+
 .play-profile-copy {
-  padding: 12px;
+  padding: 12px 14px;
   display: grid;
-  gap: 4px;
-  background: linear-gradient(180deg, rgba(25, 31, 42, 0.86), rgba(20, 25, 35, 0.9));
+  gap: 3px;
+  background: var(--surface-2);
+  border-top: 1px solid var(--line);
 }
 
 .play-profile-copy strong {
   font-family: var(--display);
-  font-size: 1.06rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--copy);
   white-space: nowrap;
   text-overflow: ellipsis;
   overflow: hidden;
 }
 
 .play-profile-copy span {
-  color: rgba(236, 241, 248, 0.78);
-  font-size: 0.85rem;
+  color: var(--copy-dim);
+  font-size: 0.78rem;
 }
 
 @media (hover: none) {

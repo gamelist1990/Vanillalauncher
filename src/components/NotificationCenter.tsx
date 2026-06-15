@@ -67,7 +67,9 @@ export function NotificationCenter({
       {notices.map((notice) => (
         <article className={`toast-item toast-${notice.tone}`} key={notice.id}>
           <div className="toast-copy">
-            <strong>{notice.tone === "success" ? "完了" : notice.tone === "error" ? "エラー" : "案内"}</strong>
+            <strong>
+              {notice.tone === "success" ? "✓ 完了" : notice.tone === "error" ? "✕ エラー" : "ℹ 案内"}
+            </strong>
             <p>{notice.text}</p>
           </div>
           <button

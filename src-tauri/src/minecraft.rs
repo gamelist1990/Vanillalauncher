@@ -1,5 +1,6 @@
 use crate::models::{
-    ActiveLauncherAccount, InstalledMod, LauncherProfile, LauncherSnapshot, LauncherSummary,
+    ActionResult, ActiveLauncherAccount, InstalledMod, LauncherProfile, LauncherSnapshot,
+    LauncherSummary, LocalModAnalysis, LocalModDependency,
 };
 use chrono::Local;
 use regex::Regex;
@@ -41,6 +42,18 @@ struct ParsedModMetadata {
     description: Option<String>,
     loader: Option<String>,
     authors: Vec<String>,
+    dependencies: Vec<ParsedModDependency>,
+    /// JAR 内のアイコンファイルパス (例: "sodium-icon.png")
+    icon_path: Option<String>,
+    /// JAR から読み出してキャッシュ済みの base64 Data URI
+    icon_data: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ParsedModDependency {
+    mod_id: String,
+    requirement: String,
+    required: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -138,7 +151,7 @@ fn launcher_account_has_verified_profile(account: &LauncherAccount) -> bool {
         .is_some()
 }
 
-fn launcher_account_email_local_part(value: &str) -> Option<String> {
+pub(crate) fn launcher_account_email_local_part(value: &str) -> Option<String> {
     let local_part = value
         .split_once('@')
         .map(|(local_part, _domain)| local_part)
@@ -2495,6 +2508,9 @@ fn read_mods(
             description: None,
             loader: None,
             authors: Vec::new(),
+            dependencies: Vec::new(),
+            icon_path: None,
+            icon_data: None,
         });
 
         let modified_at = metadata
@@ -2520,6 +2536,7 @@ fn read_mods(
             enabled,
             size_bytes: metadata.len(),
             modified_at,
+            icon_data: parsed.icon_data,
         });
     }
 
@@ -2541,23 +2558,227 @@ fn looks_like_mod_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// JAR アーカイブからアイコン画像を読み出し base64 Data URI に変換する。
+/// archive はすでに開いているため JAR を2回開かない。
+fn extract_icon_data(archive: &mut ZipArchive<File>, icon_path: &str) -> Option<String> {
+    use std::io::Read;
+    let mut entry = archive.by_name(icon_path).ok()?;
+    let mut buf = Vec::new();
+    entry.read_to_end(&mut buf).ok()?;
+    let ext = std::path::Path::new(icon_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("png")
+        .to_lowercase();
+    let mime = match ext.as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => "image/png",
+    };
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&buf);
+    Some(format!("data:{};base64,{}", mime, b64))
+}
+
 fn read_mod_metadata(path: &Path) -> Option<ParsedModMetadata> {
     let file = File::open(path).ok()?;
     let mut archive = ZipArchive::new(file).ok()?;
 
-    if let Some(metadata) = read_fabric_mod_json(&mut archive) {
-        return Some(metadata);
+    let mut metadata = if let Some(m) = read_fabric_mod_json(&mut archive) {
+        m
+    } else if let Some(m) = read_quilt_mod_json(&mut archive) {
+        m
+    } else if let Some(m) = read_forge_mods_toml(&mut archive) {
+        m
+    } else {
+        read_manifest_metadata(&mut archive)?
+    };
+
+    // アイコンを同じ archive から一度だけ読んでキャッシュする
+    if let Some(ref icon_path) = metadata.icon_path.clone() {
+        metadata.icon_data = extract_icon_data(&mut archive, icon_path);
     }
 
-    if let Some(metadata) = read_quilt_mod_json(&mut archive) {
-        return Some(metadata);
+    Some(metadata)
+}
+
+pub fn analyze_local_mod(profile_id: &str, mod_path: &str) -> Result<LocalModAnalysis, String> {
+    let source_path = PathBuf::from(mod_path.trim());
+    if !source_path.exists() {
+        return Err("指定された Mod ファイルが見つかりません。".to_string());
     }
 
-    if let Some(metadata) = read_forge_mods_toml(&mut archive) {
-        return Some(metadata);
+    let file_name = source_path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .ok_or_else(|| "ファイル名を取得できませんでした。".to_string())?
+        .to_string();
+
+    if !is_mod_archive(&file_name) {
+        return Err("対応していないファイル形式です。.jar ファイルを指定してください。".to_string());
     }
 
-    read_manifest_metadata(&mut archive)
+    validate_file_name(&file_name)?;
+
+    let profile = find_profile(profile_id)?;
+    let parsed = read_mod_metadata(&source_path).ok_or_else(|| {
+        format!("{} から Mod メタデータを読み取れませんでした。", file_name)
+    })?;
+
+    let profile_loader = normalize_loader(Some(&profile.loader));
+    let mod_loader = parsed.loader.as_deref().map(|value| normalize_loader(Some(value)));
+    let game_version = profile.game_version.as_deref().unwrap_or_default();
+    let mods_dir = resolve_profile_mods_dir(profile_id, &profile.game_dir)?;
+    let tracked_projects = tracked_project_map(&minecraft_root()?, profile_id);
+    let existing_mods = read_mods(&mods_dir, Some(profile_loader), &tracked_projects)?;
+
+    let existing = parsed.mod_id.as_deref().and_then(|mod_id| {
+        existing_mods
+            .iter()
+            .find(|installed| installed.mod_id.as_deref() == Some(mod_id))
+    });
+
+    let mut dependencies = Vec::new();
+    let mut problems = Vec::new();
+
+    if profile_loader == "vanilla" {
+        problems.push("Vanilla 構成には Mod を直接導入できません。Loader を導入してください。".to_string());
+    }
+
+    if let Some(loader) = mod_loader {
+        let loader_ok = loader == profile_loader
+            || (profile_loader == "quilt" && loader == "fabric")
+            || (profile_loader == "neoforge" && loader == "forge");
+        if !loader_ok {
+            problems.push(format!(
+                "Loader が一致しません: このJarは {} 用ですが、現在の構成は {} です。",
+                loader, profile_loader
+            ));
+        }
+    }
+
+    for dep in &parsed.dependencies {
+        let (satisfied, note) = dependency_note(dep, profile_loader, game_version, &existing_mods);
+        if dep.required && !satisfied {
+            problems.push(note.clone());
+        }
+        dependencies.push(LocalModDependency {
+            mod_id: dep.mod_id.clone(),
+            requirement: dep.requirement.clone(),
+            required: dep.required,
+            satisfied,
+            note,
+        });
+    }
+
+    let version_cmp = existing
+        .and_then(|installed| installed.version.as_deref())
+        .zip(parsed.version.as_deref())
+        .map(|(old, new)| compare_versions(new, old));
+
+    let compatible = problems.is_empty();
+    let action = if !compatible {
+        "reject".to_string()
+    } else if existing.is_some() {
+        match version_cmp.unwrap_or(1) {
+            value if value > 0 => "replace".to_string(),
+            value if value == 0 => "skip".to_string(),
+            _ => "reject".to_string(),
+        }
+    } else {
+        "install".to_string()
+    };
+
+    let display_name = parsed
+        .display_name
+        .clone()
+        .unwrap_or_else(|| display_name_for_file(&file_name));
+
+    let summary = if !compatible {
+        problems.join(" ")
+    } else if action == "replace" {
+        format!(
+            "{} は既存Modより新しいバージョンです。既存ファイルを置き換えます。",
+            display_name
+        )
+    } else if action == "skip" {
+        format!("{} は既に同じバージョンが導入済みです。", display_name)
+    } else if action == "reject" {
+        format!("{} は既存Modより古い可能性があるため却下します。", display_name)
+    } else {
+        format!("{} は現在の構成に導入できます。", display_name)
+    };
+
+    let severity = if compatible && action != "reject" {
+        "ok"
+    } else {
+        "error"
+    }
+    .to_string();
+
+    // アイコンは read_mod_metadata 内で既に base64 変換済み (JAR を2回開かない)
+    let icon_data = parsed.icon_data;
+
+    Ok(LocalModAnalysis {
+        file_path: source_path.to_string_lossy().to_string(),
+        file_name,
+        display_name,
+        mod_id: parsed.mod_id,
+        version: parsed.version,
+        description: parsed.description.and_then(trim_text),
+        loader: parsed.loader,
+        authors: parsed.authors,
+        compatible,
+        action,
+        severity,
+        summary,
+        dependencies,
+        existing_file_name: existing.map(|mod_file| mod_file.file_name.clone()),
+        existing_version: existing.and_then(|mod_file| mod_file.version.clone()),
+        icon_data,
+    })
+}
+
+pub fn import_checked_local_mod(profile_id: &str, mod_path: &str) -> Result<ActionResult, String> {
+    let analysis = analyze_local_mod(profile_id, mod_path)?;
+    if !analysis.compatible || analysis.action == "reject" || analysis.action == "skip" {
+        return Err(analysis.summary);
+    }
+
+    let source_path = PathBuf::from(&analysis.file_path);
+    let profile = find_profile(profile_id)?;
+    let mods_dir = resolve_profile_mods_dir(profile_id, &profile.game_dir)?;
+    fs::create_dir_all(&mods_dir)
+        .map_err(|error| format!("mods フォルダを準備できませんでした: {error}"))?;
+
+    if let Some(existing_file_name) = analysis.existing_file_name.as_deref() {
+        validate_file_name(existing_file_name)?;
+        let existing_path = mods_dir.join(existing_file_name);
+        if existing_path.exists() {
+            fs::remove_file(&existing_path)
+                .map_err(|error| format!("既存 Mod を置き換えられませんでした: {error}"))?;
+        }
+    }
+
+    let target_path = mods_dir.join(&analysis.file_name);
+    if target_path.exists() {
+        return Err(format!("{} はすでに存在します。", analysis.file_name));
+    }
+
+    fs::copy(&source_path, &target_path)
+        .map_err(|error| format!("Mod ファイルをコピーできませんでした: {error}"))?;
+
+    let message = if analysis.action == "replace" {
+        format!("{} を更新しました。", analysis.display_name)
+    } else {
+        format!("{} を {} に追加しました。", analysis.display_name, profile.name)
+    };
+
+    Ok(ActionResult {
+        message,
+        file_name: analysis.file_name,
+    })
 }
 
 fn read_fabric_mod_json(archive: &mut ZipArchive<File>) -> Option<ParsedModMetadata> {
@@ -2576,6 +2797,9 @@ fn read_fabric_mod_json(archive: &mut ZipArchive<File>) -> Option<ParsedModMetad
             .map(str::to_string),
         loader: Some("fabric".to_string()),
         authors: authors_from_json(value.get("authors")),
+        dependencies: fabric_dependencies_from_json(&value),
+        icon_path: value.get("icon").and_then(Value::as_str).map(str::to_string),
+        icon_data: None, // read_mod_metadata で一括処理
     })
 }
 
@@ -2602,11 +2826,15 @@ fn read_quilt_mod_json(archive: &mut ZipArchive<File>) -> Option<ParsedModMetada
             .map(str::to_string),
         loader: Some("quilt".to_string()),
         authors,
+        dependencies: quilt_dependencies_from_json(loader),
+        icon_path: metadata.and_then(|m| m.get("icon")).and_then(Value::as_str).map(str::to_string),
+        icon_data: None,
     })
 }
 
 fn read_forge_mods_toml(archive: &mut ZipArchive<File>) -> Option<ParsedModMetadata> {
-    let value = read_toml_entry(archive, "META-INF/mods.toml")?;
+    let value = read_toml_entry(archive, "META-INF/mods.toml")
+        .or_else(|| read_toml_entry(archive, "META-INF/neoforge.mods.toml"))?;
     let mods = value.get("mods")?.as_array()?;
     let mod_info = mods.first()?;
     let mod_loader = value
@@ -2614,7 +2842,12 @@ fn read_forge_mods_toml(archive: &mut ZipArchive<File>) -> Option<ParsedModMetad
         .and_then(TomlValue::as_str)
         .unwrap_or_default()
         .to_lowercase();
-    let loader = if mod_loader.contains("lowcodefml") || mod_loader.contains("javafml") {
+    let dependencies = forge_dependencies_from_toml(&value);
+    let loader = if dependencies.iter().any(|dep| dep.mod_id == "neoforge")
+        || mod_loader.contains("neoforge")
+    {
+        Some("neoforge".to_string())
+    } else if mod_loader.contains("lowcodefml") || mod_loader.contains("javafml") {
         Some("forge".to_string())
     } else {
         None
@@ -2640,6 +2873,12 @@ fn read_forge_mods_toml(archive: &mut ZipArchive<File>) -> Option<ParsedModMetad
             .and_then(TomlValue::as_str)
             .map(split_authors)
             .unwrap_or_default(),
+        dependencies,
+        icon_path: mod_info
+            .get("logoFile")
+            .and_then(TomlValue::as_str)
+            .map(str::to_string),
+        icon_data: None,
     })
 }
 
@@ -2663,7 +2902,202 @@ fn read_manifest_metadata(archive: &mut ZipArchive<File>) -> Option<ParsedModMet
             .get("Implementation-Vendor")
             .map(|value| vec![value.clone()])
             .unwrap_or_default(),
+        dependencies: Vec::new(),
+        icon_path: None,
+        icon_data: None,
     })
+}
+
+fn fabric_dependencies_from_json(value: &Value) -> Vec<ParsedModDependency> {
+    let mut deps = Vec::new();
+    for (section, required) in [("depends", true), ("recommends", false), ("suggests", false)] {
+        if let Some(map) = value.get(section).and_then(Value::as_object) {
+            for (mod_id, requirement) in map {
+                deps.push(ParsedModDependency {
+                    mod_id: mod_id.clone(),
+                    requirement: value_to_string(Some(requirement)).unwrap_or_else(|| "*".to_string()),
+                    required,
+                });
+            }
+        }
+    }
+    deps
+}
+
+fn quilt_dependencies_from_json(loader: &Value) -> Vec<ParsedModDependency> {
+    loader
+        .get("depends")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    Some(ParsedModDependency {
+                        mod_id: item.get("id")?.as_str()?.to_string(),
+                        requirement: value_to_string(item.get("versions")).unwrap_or_else(|| "*".to_string()),
+                        required: true,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn forge_dependencies_from_toml(value: &TomlValue) -> Vec<ParsedModDependency> {
+    let mut deps = Vec::new();
+    let Some(table) = value.as_table() else {
+        return deps;
+    };
+
+    for (key, item) in table {
+        if !key.starts_with("dependencies") {
+            continue;
+        }
+        if let Some(items) = item.as_array() {
+            for dep in items {
+                let Some(mod_id) = dep.get("modId").and_then(TomlValue::as_str) else {
+                    continue;
+                };
+                let required = dep
+                    .get("mandatory")
+                    .and_then(TomlValue::as_bool)
+                    .or_else(|| {
+                        dep.get("type")
+                            .and_then(TomlValue::as_str)
+                            .map(|value| value == "required")
+                    })
+                    .unwrap_or(true);
+                deps.push(ParsedModDependency {
+                    mod_id: mod_id.to_string(),
+                    requirement: dep
+                        .get("versionRange")
+                        .and_then(TomlValue::as_str)
+                        .unwrap_or("*")
+                        .to_string(),
+                    required,
+                });
+            }
+        }
+    }
+    deps
+}
+
+fn dependency_note(
+    dep: &ParsedModDependency,
+    profile_loader: &str,
+    game_version: &str,
+    installed_mods: &[InstalledMod],
+) -> (bool, String) {
+    let id = dep.mod_id.as_str();
+    if id == "minecraft" {
+        let ok = version_req_matches(&dep.requirement, game_version);
+        return (
+            ok,
+            if ok {
+                format!("Minecraft {} は条件 {} を満たしています。", game_version, dep.requirement)
+            } else {
+                format!("Minecraft {} は条件 {} を満たしていません。", game_version, dep.requirement)
+            },
+        );
+    }
+
+    if ["fabricloader", "fabric", "forge", "neoforge", "quilt_loader", "quilt"].contains(&id) {
+        let ok = match id {
+            "fabricloader" | "fabric" => profile_loader == "fabric" || profile_loader == "quilt",
+            "forge" => profile_loader == "forge" || profile_loader == "neoforge",
+            "neoforge" => profile_loader == "neoforge",
+            "quilt_loader" | "quilt" => profile_loader == "quilt",
+            _ => false,
+        };
+        return (
+            ok,
+            if ok {
+                format!("Loader 条件 {} {} を満たしています。", id, dep.requirement)
+            } else {
+                format!("Loader 条件 {} {} を満たしていません。", id, dep.requirement)
+            },
+        );
+    }
+
+    // fabric-api のサブモジュール（fabric-rendering-fluids-v1 等）は
+    // Fabric API 本体に同梱されているため、常に satisfied として扱う
+    if id.starts_with("fabric-") {
+        return (
+            true,
+            format!("Fabric API サブモジュール {} は Fabric API に同梱されています。", id),
+        );
+    }
+
+    let installed = installed_mods.iter().any(|item| item.mod_id.as_deref() == Some(id));
+    (
+        installed || !dep.required,
+        if installed {
+            format!("依存 Mod {} は導入済みです。", id)
+        } else if dep.required {
+            format!("必須依存 Mod {} が不足しています。", id)
+        } else {
+            format!("任意依存 Mod {} は未導入です。", id)
+        },
+    )
+}
+
+fn version_req_matches(requirement: &str, current: &str) -> bool {
+    let requirement = requirement.trim();
+    if requirement.is_empty() || requirement == "*" || current.is_empty() {
+        return true;
+    }
+    if requirement.contains(current) {
+        return true;
+    }
+
+    let range = requirement.trim_matches(|c| c == '[' || c == ']' || c == '(' || c == ')');
+    for part in range.split(',').map(str::trim).filter(|value| !value.is_empty()) {
+        if let Some(min) = part.strip_prefix(">=") {
+            if compare_versions(current, min) < 0 {
+                return false;
+            }
+        } else if let Some(max) = part.strip_prefix("<=") {
+            if compare_versions(current, max) > 0 {
+                return false;
+            }
+        } else if let Some(min) = part.strip_prefix('>') {
+            if compare_versions(current, min) <= 0 {
+                return false;
+            }
+        } else if let Some(max) = part.strip_prefix('<') {
+            if compare_versions(current, max) >= 0 {
+                return false;
+            }
+        } else if !part.ends_with('-') && compare_versions(current, part) != 0 {
+            return false;
+        }
+    }
+    true
+}
+
+fn compare_versions(left: &str, right: &str) -> i32 {
+    let left_parts = numeric_version_parts(left);
+    let right_parts = numeric_version_parts(right);
+    let len = left_parts.len().max(right_parts.len());
+    for index in 0..len {
+        let left_value = *left_parts.get(index).unwrap_or(&0);
+        let right_value = *right_parts.get(index).unwrap_or(&0);
+        if left_value > right_value {
+            return 1;
+        }
+        if left_value < right_value {
+            return -1;
+        }
+    }
+    0
+}
+
+fn numeric_version_parts(value: &str) -> Vec<u64> {
+    value
+        .split(|ch: char| !ch.is_ascii_digit())
+        .filter(|part| !part.is_empty())
+        .filter_map(|part| part.parse::<u64>().ok())
+        .collect()
 }
 
 fn read_json_entry(archive: &mut ZipArchive<File>, name: &str) -> Option<Value> {

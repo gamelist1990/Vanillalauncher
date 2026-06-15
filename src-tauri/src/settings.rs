@@ -30,6 +30,8 @@ pub struct AppSettings {
     pub temp_cache_enabled: bool,
     #[serde(default = "default_performance_lite_mode")]
     pub performance_lite_mode: PerformanceLiteMode,
+    #[serde(default)]
+    pub custom_java_path: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -39,6 +41,7 @@ pub struct SoftwareStatus {
     pub cache_dir: String,
     pub settings_path: String,
     pub java_runtime_dir: String,
+    pub custom_java_path: Option<String>,
     pub app_log_path: String,
     pub temp_cache_enabled: bool,
     pub cache_file_count: usize,
@@ -80,6 +83,7 @@ pub fn default_settings() -> AppSettings {
     AppSettings {
         temp_cache_enabled: true,
         performance_lite_mode: PerformanceLiteMode::Auto,
+        custom_java_path: None,
     }
 }
 
@@ -113,10 +117,13 @@ pub fn get_app_settings() -> AppSettings {
 pub fn update_app_settings(
     temp_cache_enabled: bool,
     performance_lite_mode: PerformanceLiteMode,
+    custom_java_path: Option<String>,
 ) -> Result<ActionResult, String> {
+    let custom_java_path = normalize_custom_java_path(custom_java_path)?;
     let settings = AppSettings {
         temp_cache_enabled,
         performance_lite_mode,
+        custom_java_path,
     };
     save_settings(&settings)?;
 
@@ -153,6 +160,7 @@ pub fn get_software_status() -> Result<SoftwareStatus, String> {
         cache_dir: cache_dir().to_string_lossy().to_string(),
         settings_path: settings_path().to_string_lossy().to_string(),
         java_runtime_dir: java_runtime_dir().to_string_lossy().to_string(),
+        custom_java_path: settings.custom_java_path.clone(),
         app_log_path: crate::app_log::log_file_path()
             .to_string_lossy()
             .to_string(),
@@ -161,6 +169,48 @@ pub fn get_software_status() -> Result<SoftwareStatus, String> {
         cache_total_bytes: bytes,
         debug_export_dir: debug_export_dir().to_string_lossy().to_string(),
     })
+}
+
+pub fn validate_custom_java_path(path: &str) -> Result<PathBuf, String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("Java のパスが空です。".to_string());
+    }
+
+    let candidate = PathBuf::from(trimmed);
+    if !candidate.exists() {
+        return Err(format!("指定された Java が見つかりません: {}", candidate.display()));
+    }
+    if !candidate.is_file() {
+        return Err(format!("Java 実行ファイルを指定してください: {}", candidate.display()));
+    }
+
+    let file_name = candidate
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    let valid_name = if cfg!(target_os = "windows") {
+        file_name.eq_ignore_ascii_case("java.exe") || file_name.eq_ignore_ascii_case("javaw.exe")
+    } else {
+        file_name == "java"
+    };
+    if !valid_name {
+        return Err("java.exe / javaw.exe を指定してください。".to_string());
+    }
+
+    Ok(candidate)
+}
+
+fn normalize_custom_java_path(path: Option<String>) -> Result<Option<String>, String> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    let java = validate_custom_java_path(trimmed)?;
+    Ok(Some(java.to_string_lossy().to_string()))
 }
 
 pub fn export_debug_log() -> Result<DebugExportResult, String> {

@@ -9,8 +9,8 @@ use crate::{
         CustomProfileDraft, TrackedModProject, TrackedModSource,
     },
     models::{
-        ActionResult, InstallResult, ModRemoteState, ModpackExportResult, ModpackInstallResult,
-        ModpackVersionSummary, ModrinthProject, ModrinthVersion,
+        ActionResult, InstallResult, LocalModAnalysis, ModRemoteState, ModpackExportResult,
+        ModpackInstallResult, ModpackVersionSummary, ModrinthProject, ModrinthVersion,
     },
     progress::emit_progress,
     settings,
@@ -1748,6 +1748,14 @@ pub fn import_local_mod(profile_id: String, mod_path: String) -> Result<ActionRe
         message: format!("{} を {} に追加しました。", file_name, profile.name),
         file_name,
     })
+}
+
+pub fn analyze_local_mod(profile_id: String, mod_path: String) -> Result<LocalModAnalysis, String> {
+    crate::minecraft::analyze_local_mod(&profile_id, &mod_path)
+}
+
+pub fn import_checked_local_mod(profile_id: String, mod_path: String) -> Result<ActionResult, String> {
+    crate::minecraft::import_checked_local_mod(&profile_id, &mod_path)
 }
 
 pub fn remove_mod(profile_id: String, file_name: String) -> Result<ActionResult, String> {

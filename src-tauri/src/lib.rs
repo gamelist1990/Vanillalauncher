@@ -8,7 +8,7 @@ mod settings;
 
 use models::{
     ActionResult, FabricCatalog, FabricInstallResult, InstallResult, LaunchResult,
-    LauncherSnapshot, LoaderCatalog, LoaderInstallResult, ModRemoteState, ModpackExportResult,
+    LauncherSnapshot, LoaderCatalog, LoaderInstallResult, LocalModAnalysis, ModRemoteState, ModpackExportResult,
     ModpackInstallResult, ModpackVersionSummary, ModrinthProject, XboxRpsStateResult,
 };
 use settings::{AppSettings, DebugExportResult, PerformanceLiteMode, SoftwareStatus};
@@ -220,6 +220,16 @@ fn import_local_mod(profile_id: String, mod_path: String) -> Result<ActionResult
 }
 
 #[tauri::command]
+fn analyze_local_mod(profile_id: String, mod_path: String) -> Result<LocalModAnalysis, String> {
+    modrinth::analyze_local_mod(profile_id, mod_path)
+}
+
+#[tauri::command]
+fn import_checked_local_mod(profile_id: String, mod_path: String) -> Result<ActionResult, String> {
+    modrinth::import_checked_local_mod(profile_id, mod_path)
+}
+
+#[tauri::command]
 fn remove_mod(profile_id: String, file_name: String) -> Result<ActionResult, String> {
     modrinth::remove_mod(profile_id, file_name)
 }
@@ -306,8 +316,9 @@ fn get_app_settings() -> Result<AppSettings, String> {
 fn update_app_settings(
     temp_cache_enabled: bool,
     performance_lite_mode: PerformanceLiteMode,
+    custom_java_path: Option<String>,
 ) -> Result<ActionResult, String> {
-    settings::update_app_settings(temp_cache_enabled, performance_lite_mode)
+    settings::update_app_settings(temp_cache_enabled, performance_lite_mode, custom_java_path)
 }
 
 #[tauri::command]
@@ -384,6 +395,8 @@ pub fn run() {
             uninstall_modrinth_project,
             set_mod_enabled,
             import_local_mod,
+            analyze_local_mod,
+            import_checked_local_mod,
             remove_mod,
             resolve_profile_path,
             get_fabric_catalog,

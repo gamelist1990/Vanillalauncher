@@ -1,4 +1,5 @@
 import { ConfirmModal } from "../../components/ConfirmModal";
+import { LocalModImportModal } from "../../components/LocalModImportModal";
 import { ModpackExportModal } from "../../components/ModpackExportModal";
 import { ModpackVersionModal } from "../../components/ModpackVersionModal";
 import { ProfileNameModal } from "../../components/ProfileNameModal";
@@ -22,6 +23,8 @@ type AppModalsProps = {
   modpackExportDialog: ModpackExportDialogState | null;
   progressDetailDialog: ProgressDetailDialogState | null;
   progressDetailSnapshot: ProgressSnapshot | null;
+  localModImportOpen: boolean;
+  selectedProfileId: string | null;
   busyAction: string | null;
   onCloseConfirmDialog: () => void;
   onConfirmDialog: () => void;
@@ -39,6 +42,9 @@ type AppModalsProps = {
   onConfirmModpackExport: () => void;
   onSelectModpackExportFormat: (value: "curseforge" | "modrinth") => void;
   onCloseProgressDetailDialog: () => void;
+  onCloseLocalModImport: () => void;
+  onLocalModImported: (message: string) => void;
+  onLocalModError: (message: string) => void;
 };
 
 export function AppModals({
@@ -49,6 +55,8 @@ export function AppModals({
   modpackExportDialog,
   progressDetailDialog,
   progressDetailSnapshot,
+  localModImportOpen,
+  selectedProfileId,
   busyAction,
   onCloseConfirmDialog,
   onConfirmDialog,
@@ -66,6 +74,9 @@ export function AppModals({
   onConfirmModpackExport,
   onSelectModpackExportFormat,
   onCloseProgressDetailDialog,
+  onCloseLocalModImport,
+  onLocalModImported,
+  onLocalModError,
 }: AppModalsProps) {
   return (
     <>
@@ -130,6 +141,15 @@ export function AppModals({
         open={progressDetailDialog !== null && progressDetailSnapshot !== null}
         progress={progressDetailSnapshot}
         onClose={onCloseProgressDetailDialog}
+      />
+
+      <LocalModImportModal
+        openModal={localModImportOpen}
+        profileId={selectedProfileId}
+        busy={busyAction === "import-local-mod"}
+        onClose={onCloseLocalModImport}
+        onImported={onLocalModImported}
+        onError={onLocalModError}
       />
     </>
   );

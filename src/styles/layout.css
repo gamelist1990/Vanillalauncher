@@ -1,0 +1,77 @@
+/* App shell layout */
+.app-shell {
+  display: grid;
+  grid-template-columns: 240px minmax(0,1fr);
+  min-height: 100vh;
+  background: var(--bg);
+}
+
+/* Performance lite */
+.app-shell.performance-lite *,
+.app-shell.performance-lite *::before,
+.app-shell.performance-lite *::after {
+  animation-duration: 0s !important;
+  animation-delay: 0s !important;
+  transition-duration: 0s !important;
+  scroll-behavior: auto !important;
+}
+.app-shell.performance-lite .sidebar,
+.app-shell.performance-lite .sidebar-panel,
+.app-shell.performance-lite .panel,
+.app-shell.performance-lite .toolbar-card,
+.app-shell.performance-lite .hero-panel,
+.app-shell.performance-lite .toast-item,
+.app-shell.performance-lite .progress-toast,
+.app-shell.performance-lite .empty-state,
+.app-shell.performance-lite .profile-chip,
+.app-shell.performance-lite .mod-row,
+.app-shell.performance-lite .loader-panel,
+.app-shell.performance-lite .discover-result-row,
+.app-shell.performance-lite .loader-feature,
+.app-shell.performance-lite .launch-deck {
+  backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+.app-shell.performance-lite .sidebar-backdrop { backdrop-filter: none; }
+.app-shell.performance-lite .main-column { animation: none; }
+.app-shell.performance-lite .nav-item:hover,
+.app-shell.performance-lite .profile-chip:hover,
+.app-shell.performance-lite .secondary-button:hover,
+.app-shell.performance-lite .danger-button:hover,
+.app-shell.performance-lite .play-button:hover,
+.app-shell.performance-lite .action-row:hover,
+.app-shell.performance-lite .link-button:hover,
+.app-shell.performance-lite .segmented button:hover { transform: none; }
+
+/* Main column */
+.main-column {
+  min-width: 0;
+  min-height: 100vh;
+  padding: 24px 28px 32px;
+  display: grid;
+  align-content: start;
+  gap: 20px;
+  background: var(--bg);
+  animation: rise-in 200ms var(--ease);
+}
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.workspace { display: grid; gap: 16px; min-width: 0; }
+
+/* Responsive */
+@media (max-width: 900px) {
+  .app-shell { grid-template-columns: minmax(0,1fr); }
+  .sidebar {
+    position: fixed;
+    top: 0; left: 0; bottom: 0;
+    width: 260px;
+    z-index: 55;
+    transform: translateX(-100%);
+    transition: transform 240ms var(--ease);
+  }
+  .sidebar.is-open { transform: translateX(0); }
+  .main-column { padding: 16px; }
+}

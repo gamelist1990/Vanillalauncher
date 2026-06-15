@@ -1,0 +1,22 @@
+/* Base / reset */
+* { box-sizing: border-box; }
+html, body, #root { min-height: 100%; margin: 0; }
+body { min-height: 100vh; background: var(--bg); color: var(--copy); }
+button, input, select { font: inherit; }
+button { border: 0; }
+input, select { color: var(--copy); background: var(--surface-3); border: 1px solid var(--line); }
+code { font-family: "Cascadia Code", "JetBrains Mono", monospace; }
+
+:focus-visible {
+  outline: 2px solid var(--accent-mid);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0s !important;
+    transition-duration: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}

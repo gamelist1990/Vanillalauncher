@@ -1,0 +1,47 @@
+/* Settings view */
+.settings-header-card { display: grid; gap: 16px; }
+.settings-header-top  { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+
+.settings-health-badge {
+  display: grid; gap: 4px; padding: 12px 16px;
+  border-radius: var(--radius); border: 1px solid var(--line);
+  background: var(--surface-3); min-width: 160px;
+}
+.settings-health-badge.is-healthy { border-color: var(--accent-mid); background: var(--accent-soft); }
+.settings-health-badge.is-healthy strong { color: var(--accent); }
+.settings-health-label { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--copy-muted); }
+.settings-health-badge strong { font-size: 0.88rem; font-weight: 700; color: var(--copy); }
+
+.settings-stat-row { display: flex; gap: 12px; flex-wrap: wrap; }
+.settings-stat {
+  flex: 1 1 120px; padding: 10px 14px;
+  border-radius: var(--radius-sm); background: var(--surface-3);
+  border: 1px solid var(--line); display: grid; gap: 3px;
+}
+.settings-stat span   { font-size: 0.68rem; color: var(--copy-muted); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; }
+.settings-stat strong { font-size: 0.9rem; font-weight: 700; color: var(--copy); }
+.settings-stat .stat-on  { color: var(--accent); }
+.settings-stat .stat-off { color: var(--copy-muted); }
+
+.settings-field { display: grid; gap: 12px; padding: 16px 18px; }
+.settings-field-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.settings-field-label { font-size: 0.92rem; font-weight: 700; color: var(--copy); margin: 0 0 4px; }
+.settings-field-desc  { font-size: 0.8rem; color: var(--copy-dim); margin: 0; line-height: 1.5; }
+.settings-field-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+
+.settings-path-list { display: grid; gap: 8px; padding: 16px 18px; border-bottom: 1px solid var(--line); }
+.settings-path-row  { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.settings-path-label {
+  font-size: 0.78rem; font-weight: 600; color: var(--copy-dim);
+  min-width: 100px; flex: 0 0 auto;
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+.settings-path-value {
+  font-family: "Cascadia Code", "JetBrains Mono", monospace;
+  font-size: 0.78rem; color: var(--accent);
+  background: var(--surface-3); padding: 3px 8px;
+  border-radius: var(--radius-xs); border: 1px solid var(--line);
+  word-break: break-all; flex: 1 1 0;
+}
+.settings-field + .settings-field-actions,
+.settings-path-list + .settings-field-actions { padding: 14px 18px 16px; }
