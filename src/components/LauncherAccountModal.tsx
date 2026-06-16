@@ -4,6 +4,11 @@ import type { LauncherAccountEntry, Notice, ProgressState } from "../app/types";
 
 const XBOX_AVATAR_CACHE_KEY = "launcher-account-xbox-avatars-v1";
 const XBOX_AVATAR_CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 30;
+const XBOX_AVATAR_FALLBACK_URL = "/default-avatar.svg";
+
+const UNSAFE_XBOX_AVATAR_URL_PATTERNS = [
+  "avatar-ssl.xboxlive.com/users/",
+];
 
 type CachedXboxAvatar = {
   url: string;
@@ -19,18 +24,66 @@ function xboxAvatarCacheId(account: LauncherAccountEntry) {
   return account.xuid?.trim() || account.localId || account.gamerTag?.trim() || account.username;
 }
 
-function buildXboxAvatarUrl(account: LauncherAccountEntry) {
-  const xuid = account.xuid?.trim();
-  if (xuid) {
-    return `https://avatar-ssl.xboxlive.com/users/xuid(${encodeURIComponent(xuid)})/avatarpic-l.png`;
+function readOptionalString(source: object, keys: string[]) {
+  const record = source as Record<string, unknown>;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
   }
-
-  const gamerTag = account.gamerTag?.trim();
-  if (gamerTag) {
-    return `https://avatar-ssl.xboxlive.com/users/gt(${encodeURIComponent(gamerTag)})/avatarpic-l.png`;
-  }
-
   return null;
+}
+
+function isUnsafeXboxAvatarUrl(url: string) {
+  return UNSAFE_XBOX_AVATAR_URL_PATTERNS.some((pattern) => url.includes(pattern));
+}
+
+function withXboxAvatarDisplaySize(url: string) {
+  if (!url.includes("images-eds.xboxlive.com/image")) {
+    return url;
+  }
+
+  try {
+    const sizedUrl = new URL(url);
+    if (!sizedUrl.searchParams.has("format")) {
+      sizedUrl.searchParams.set("format", "png");
+    }
+    if (!sizedUrl.searchParams.has("w")) {
+      sizedUrl.searchParams.set("w", "208");
+    }
+    if (!sizedUrl.searchParams.has("h")) {
+      sizedUrl.searchParams.set("h", "208");
+    }
+    return sizedUrl.toString();
+  } catch {
+    return url;
+  }
+}
+
+function normalizeXboxAvatarUrl(rawUrl: string | null) {
+  if (!rawUrl || isUnsafeXboxAvatarUrl(rawUrl)) {
+    return null;
+  }
+  return withXboxAvatarDisplaySize(rawUrl);
+}
+
+function buildXboxAvatarUrl(account: LauncherAccountEntry) {
+  return normalizeXboxAvatarUrl(readOptionalString(account, [
+    "gameDisplayPicRaw",
+    "GameDisplayPicRaw",
+    "displayPicRaw",
+    "DisplayPicRaw",
+    "appDisplayPicRaw",
+    "AppDisplayPicRaw",
+    "gameDisplayPictureResizeUri",
+    "GameDisplayPictureResizeUri",
+    "appDisplayPictureResizeUri",
+    "AppDisplayPictureResizeUri",
+    "profilePicture",
+    "profilePictureUrl",
+    "avatarUrl",
+  ]));
 }
 
 function accountHasResolvedXboxIdentity(account: LauncherAccountEntry) {
@@ -44,14 +97,6 @@ function normalizeXboxAvatarIdentity(account: LauncherAccountEntry) {
   };
 }
 
-function buildLegacyXboxAvatarUrl(gamerTag?: string | null) {
-  const trimmed = gamerTag?.trim();
-  if (!trimmed) {
-    return null;
-  }
-  return `https://avatar-ssl.xboxlive.com/users/gt(${encodeURIComponent(trimmed)})/avatarpic-l.png`;
-}
-
 function loadXboxAvatarTempCacheOnce() {
   if (xboxAvatarTempCacheLoadPromise) {
     return xboxAvatarTempCacheLoadPromise;
@@ -63,7 +108,7 @@ function loadXboxAvatarTempCacheOnce() {
       xboxAvatarTempCache = raw ? (JSON.parse(raw) as Record<string, CachedXboxAvatar>) : {};
       const now = Date.now();
       for (const [key, entry] of Object.entries(xboxAvatarTempCache)) {
-        if (!entry.url || (!entry.xuid && !entry.gamerTag) || now - entry.cachedAt > XBOX_AVATAR_CACHE_TTL_MS) {
+        if (!entry.url || isUnsafeXboxAvatarUrl(entry.url) || now - entry.cachedAt > XBOX_AVATAR_CACHE_TTL_MS) {
           delete xboxAvatarTempCache[key];
         }
       }
@@ -83,10 +128,6 @@ function persistXboxAvatarTempCache() {
 }
 
 function resolveCachedXboxAvatarUrl(account: LauncherAccountEntry) {
-  if (!accountHasResolvedXboxIdentity(account)) {
-    return null;
-  }
-
   const directUrl = buildXboxAvatarUrl(account);
   if (!directUrl) {
     return null;
@@ -117,6 +158,18 @@ function resolveCachedXboxAvatarUrl(account: LauncherAccountEntry) {
   };
   persistXboxAvatarTempCache();
   return directUrl;
+}
+
+function invalidateCachedXboxAvatarUrl(account: LauncherAccountEntry, failedUrl: string | null) {
+  if (xboxAvatarTempCache === null || !failedUrl) {
+    return;
+  }
+
+  const cacheId = xboxAvatarCacheId(account);
+  if (xboxAvatarTempCache[cacheId]?.url === failedUrl) {
+    delete xboxAvatarTempCache[cacheId];
+    persistXboxAvatarTempCache();
+  }
 }
 
 // ─── AccountRow: 個人情報保護付きアカウント行 ───────────────────────────────
@@ -195,7 +248,11 @@ function AccountRow({ account, selected, switching, sourceLabel, sourceClass, ca
               alt=""
               loading="lazy"
               referrerPolicy="no-referrer"
-              onError={() => setAvatarFailed(true)}
+              onError={() => {
+                invalidateCachedXboxAvatarUrl(account, avatarUrl);
+                setAvatarFailed(true);
+                setAvatarUrl(null);
+              }}
             />
           ) : (
             <>
@@ -293,6 +350,7 @@ type LauncherAccountModalProps = {
 };
 
 type AccountManagerTab = "manage" | "login";
+type AccountFilterType = "all" | "ready" | "active" | "detected";
 
 // Microsoft アイコン SVG
 function MicrosoftIcon() {
@@ -344,6 +402,8 @@ export function LauncherAccountModal({
   }, [open, onClose]);
 
   const [activeTab, setActiveTab] = useState<AccountManagerTab>("manage");
+  const [accountQuery, setAccountQuery] = useState("");
+  const [accountFilter, setAccountFilter] = useState<AccountFilterType>("all");
 
   useEffect(() => {
     if (xboxLoggingIn) {
@@ -354,6 +414,8 @@ export function LauncherAccountModal({
   if (!open) return null;
 
   const javaReadyCount = accounts.filter((a) => a.hasJavaAccess).length;
+  const detectedCount = accounts.filter((a) => a.authSource === "pc-scan").length;
+  const selectedAccount = accounts.find((account) => account.isActive) ?? null;
   const scanPercent = scanProgress ? Math.round(scanProgress.percent) : null;
   const scanDetail = scanProgress?.detail ?? "Launcher 保存先と認証キャッシュを確認しています。";
   const loginPercent = loginProgress ? Math.round(loginProgress.percent) : null;
@@ -365,16 +427,38 @@ export function LauncherAccountModal({
   const launcherAccounts = accounts.filter(
     (account) => account.authSource !== "microsoft-oauth" && account.authSource !== "pc-scan",
   );
+  const normalizedQuery = accountQuery.trim().toLowerCase();
+  const onlineModeLabel = offlineModeEnabled ? `オフライン: ${offlineUsername || "Player"}` : "オンライン起動";
+
+  const filterAccounts = (sectionAccounts: LauncherAccountEntry[]) => sectionAccounts.filter((account) => {
+    const matchesQuery = !normalizedQuery || [
+      account.username,
+      account.microsoftUsername ?? "",
+      account.gamerTag ?? "",
+      account.localId,
+    ].some((value) => value.toLowerCase().includes(normalizedQuery));
+
+    if (!matchesQuery) return false;
+    if (accountFilter === "ready") return account.hasJavaAccess;
+    if (accountFilter === "active") return account.isActive;
+    if (accountFilter === "detected") return account.authSource === "pc-scan";
+    return true;
+  });
 
   const renderAccountRows = (
     sectionAccounts: LauncherAccountEntry[],
     emptyMessage: string,
     sourceLabel: string,
     sourceClass: string,
-  ) => sectionAccounts.length === 0 ? (
-    <div className="acct-mgr-section-empty">{emptyMessage}</div>
-  ) : (
-    sectionAccounts.map((account) => {
+  ) => {
+    const visibleAccounts = filterAccounts(sectionAccounts);
+
+    return visibleAccounts.length === 0 ? (
+      <div className="acct-mgr-section-empty">
+        {sectionAccounts.length === 0 ? emptyMessage : "検索・フィルター条件に一致するアカウントはありません。"}
+      </div>
+    ) : (
+      visibleAccounts.map((account) => {
       const selected = account.isActive;
       const switching = switchingLocalId === account.localId;
       const canSelect = !offlineModeEnabled && !busy && !switching && !selected;
@@ -394,14 +478,15 @@ export function LauncherAccountModal({
           onLogout={() => onLogoutMicrosoftAccount(account.localId)}
         />
       );
-    })
-  );
+      })
+    );
+  };
 
   return (
     <div className="modal-layer" role="dialog" aria-modal="true" aria-labelledby="acct-mgr-title">
       <button type="button" className="modal-backdrop" onClick={onClose} aria-label="閉じる" />
 
-      <article className="modal-sheet modal-sheet-wide acct-mgr-sheet">
+      <article className="modal-sheet modal-sheet-wide acct-mgr-sheet acct-mgr-pro-sheet">
 
         {/* ===== ヘッダー ===== */}
         <header className="acct-mgr-header">
@@ -458,6 +543,27 @@ export function LauncherAccountModal({
           </div>
         )}
 
+        {/* ===== 一目で分かるアカウント概要 ===== */}
+        <section className="acct-mgr-dashboard" aria-label="アカウント概要">
+          <article className="acct-mgr-current-card">
+            <span className="acct-mgr-card-kicker">現在の起動アカウント</span>
+            <strong>{selectedAccount?.username ?? "未選択"}</strong>
+            <span>{selectedAccount?.hasJavaAccess ? "Java Edition 利用可能" : onlineModeLabel}</span>
+          </article>
+          <article className="acct-mgr-stat-card">
+            <span>総アカウント</span>
+            <strong>{accounts.length}</strong>
+          </article>
+          <article className="acct-mgr-stat-card is-ready">
+            <span>Java OK</span>
+            <strong>{javaReadyCount}</strong>
+          </article>
+          <article className="acct-mgr-stat-card is-detected">
+            <span>PC 検出</span>
+            <strong>{detectedCount}</strong>
+          </article>
+        </section>
+
         {/* ===== 完全タブ分離: 管理 / ログイン ===== */}
         <nav className="acct-mgr-tabs" role="tablist" aria-label="アカウント操作">
           <button
@@ -499,102 +605,114 @@ export function LauncherAccountModal({
             aria-labelledby="acct-tab-manage"
             className="acct-mgr-tab-panel"
           >
-            {/* ===== アカウントマネージャー: ログイン済み / PC探索を分離 ===== */}
-            <div className={`acct-mgr-list ${scanning ? "is-busy" : ""}`}>
-              {accounts.length === 0 ? (
-                <div className="acct-mgr-empty">
-                  <span className="acct-mgr-empty-icon">🔍</span>
-                  <strong>アカウントが見つかりません</strong>
-                  <span>「アカウントログイン」タブから Microsoft アカウントを追加するか、このタブで PC から再検出してください。</span>
+            <div className="acct-mgr-workspace">
+              <aside className="acct-mgr-sidepanel" aria-label="アカウント操作パネル">
+                <div className="acct-mgr-side-card is-primary">
+                  <span className="acct-mgr-side-icon" aria-hidden="true">🧭</span>
+                  <strong>次にやること</strong>
+                  <span>{accounts.length === 0 ? "まず Microsoft ログインか PC 再検出を実行してください。" : "左の一覧から使用するアカウントを選んで切替できます。"}</span>
                 </div>
-              ) : (
-                <>
-                  <section className="acct-mgr-section">
-                    <div className="acct-mgr-section-head">
-                      <strong>Microsoft ログイン済み</strong>
-                      <span>このランチャーで認証・Java 所有確認済み</span>
-                    </div>
-                    {renderAccountRows(microsoftAccounts, "Microsoft 経由でログインしたアカウントはまだありません。", "Microsoft ログイン", "tag-ms")}
-                  </section>
 
-                  <section className="acct-mgr-section">
-                    <div className="acct-mgr-section-head">
-                      <strong>PC から検出</strong>
-                      <span>公式 Launcher / PC 内キャッシュから見つかった候補</span>
-                    </div>
-                    {renderAccountRows(pcScanAccounts, "PC 探索で見つかった追加候補はありません。", "PC から検出", "tag-pc")}
-                  </section>
-
-                  <section className="acct-mgr-section">
-                    <div className="acct-mgr-section-head">
-                      <strong>公式 Launcher 保存済み</strong>
-                      <span>公式 Launcher 側に保存されているアカウント</span>
-                    </div>
-                    {renderAccountRows(launcherAccounts, "公式 Launcher 保存済みアカウントはありません。", "Launcher 保存済み", "tag-launcher")}
-                  </section>
-                </>
-              )}
-            </div>
-
-            {/* ===== 管理アクション ===== */}
-            <div className="acct-mgr-actions">
-              <div className="acct-mgr-sub-actions">
-                <button
-                  type="button"
-                  className="acct-mgr-btn-sub"
-                  onClick={onScanAccounts}
-                  disabled={busy}
-                >
-                  {scanning ? "🔍 検出中…" : "🔍 PC から再検出"}
-                </button>
-                <button
-                  type="button"
-                  className="acct-mgr-btn-sub"
-                  onClick={onOpenOfficialLauncher}
-                  disabled={interactionDisabled}
-                >
-                  🚀 公式 Launcher を開く
-                </button>
-              </div>
-
-              <div className="acct-mgr-mode-row">
-                <span className="acct-mgr-mode-label">起動モード</span>
-                <div className="segmented acct-mgr-mode-seg" role="group" aria-label="起動モード">
-                  <button
-                    type="button"
-                    className={!offlineModeEnabled ? "is-active" : ""}
-                    onClick={() => onToggleOfflineMode(false)}
-                    disabled={busy}
-                  >
-                    🌐 オンライン
-                  </button>
-                  <button
-                    type="button"
-                    className={offlineModeEnabled ? "is-active" : ""}
-                    onClick={() => onToggleOfflineMode(true)}
-                    disabled={busy}
-                  >
-                    ✈ オフライン
-                  </button>
-                </div>
-              </div>
-
-              {offlineModeEnabled && (
-                <div className="acct-mgr-offline-field">
-                  <label className="acct-mgr-offline-label" htmlFor="acct-mgr-offline-name">
-                    オフラインユーザー名
-                  </label>
+                <div className="acct-mgr-tool-card">
+                  <span className="acct-mgr-tool-title">検索と絞り込み</span>
                   <input
-                    id="acct-mgr-offline-name"
-                    className="acct-mgr-offline-input"
-                    value={offlineUsername}
-                    onChange={(e) => onChangeOfflineUsername(e.target.value)}
-                    placeholder="例: Player"
-                    maxLength={16}
-                    disabled={busy}
+                    className="acct-mgr-search-input"
+                    value={accountQuery}
+                    onChange={(event) => setAccountQuery(event.target.value)}
+                    placeholder="名前 / メール / ゲーマータグ"
+                    aria-label="アカウント検索"
                   />
+                  <div className="acct-mgr-filter-grid" role="group" aria-label="アカウント絞り込み">
+                    {([
+                      ["all", "すべて"],
+                      ["ready", "Java OK"],
+                      ["active", "使用中"],
+                      ["detected", "PC検出"],
+                    ] as const).map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        className={accountFilter === value ? "is-active" : ""}
+                        onClick={() => setAccountFilter(value)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              )}
+
+                <div className="acct-mgr-tool-card">
+                  <span className="acct-mgr-tool-title">クイック操作</span>
+                  <button type="button" className="acct-mgr-btn-sub" onClick={onScanAccounts} disabled={busy}>
+                    {scanning ? "🔍 検出中…" : "🔍 PC から再検出"}
+                  </button>
+                  <button type="button" className="acct-mgr-btn-sub" onClick={onOpenOfficialLauncher} disabled={interactionDisabled}>
+                    🚀 公式 Launcher を開く
+                  </button>
+                </div>
+
+                <div className="acct-mgr-tool-card">
+                  <span className="acct-mgr-tool-title">起動モード</span>
+                  <div className="segmented acct-mgr-mode-seg" role="group" aria-label="起動モード">
+                    <button type="button" className={!offlineModeEnabled ? "is-active" : ""} onClick={() => onToggleOfflineMode(false)} disabled={busy}>
+                      🌐 オンライン
+                    </button>
+                    <button type="button" className={offlineModeEnabled ? "is-active" : ""} onClick={() => onToggleOfflineMode(true)} disabled={busy}>
+                      ✈ オフライン
+                    </button>
+                  </div>
+                  {offlineModeEnabled && (
+                    <div className="acct-mgr-offline-field">
+                      <label className="acct-mgr-offline-label" htmlFor="acct-mgr-offline-name">オフラインユーザー名</label>
+                      <input
+                        id="acct-mgr-offline-name"
+                        className="acct-mgr-offline-input"
+                        value={offlineUsername}
+                        onChange={(e) => onChangeOfflineUsername(e.target.value)}
+                        placeholder="例: Player"
+                        maxLength={16}
+                        disabled={busy}
+                      />
+                    </div>
+                  )}
+                </div>
+              </aside>
+
+              <main className={`acct-mgr-mainpanel ${scanning ? "is-busy" : ""}`}>
+                {accounts.length === 0 ? (
+                  <div className="acct-mgr-empty">
+                    <span className="acct-mgr-empty-icon">🔍</span>
+                    <strong>アカウントが見つかりません</strong>
+                    <span>「アカウントログイン」タブから Microsoft アカウントを追加するか、この画面で PC から再検出してください。</span>
+                  </div>
+                ) : (
+                  <div className="acct-mgr-list acct-mgr-list-modern">
+                    <section className="acct-mgr-section">
+                      <div className="acct-mgr-section-head">
+                        <strong>Microsoft ログイン済み</strong>
+                        <span>このランチャーで認証・Java 所有確認済み</span>
+                      </div>
+                      {renderAccountRows(microsoftAccounts, "Microsoft 経由でログインしたアカウントはまだありません。", "Microsoft ログイン", "tag-ms")}
+                    </section>
+
+                    <section className="acct-mgr-section">
+                      <div className="acct-mgr-section-head">
+                        <strong>PC から検出</strong>
+                        <span>公式 Launcher / PC 内キャッシュから見つかった候補</span>
+                      </div>
+                      {renderAccountRows(pcScanAccounts, "PC 探索で見つかった追加候補はありません。", "PC から検出", "tag-pc")}
+                    </section>
+
+                    <section className="acct-mgr-section">
+                      <div className="acct-mgr-section-head">
+                        <strong>公式 Launcher 保存済み</strong>
+                        <span>公式 Launcher 側に保存されているアカウント</span>
+                      </div>
+                      {renderAccountRows(launcherAccounts, "公式 Launcher 保存済みアカウントはありません。", "Launcher 保存済み", "tag-launcher")}
+                    </section>
+                  </div>
+                )}
+              </main>
             </div>
           </section>
         ) : (

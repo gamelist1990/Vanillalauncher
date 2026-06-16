@@ -54,6 +54,14 @@ export type LauncherAccountEntry = {
   username: string;
   gamerTag?: string | null;
   xuid?: string | null;
+  avatarUrl?: string | null;
+  profilePicture?: string | null;
+  profilePictureUrl?: string | null;
+  displayPicRaw?: string | null;
+  appDisplayPicRaw?: string | null;
+  gameDisplayPicRaw?: string | null;
+  appDisplayPictureResizeUri?: string | null;
+  gameDisplayPictureResizeUri?: string | null;
   microsoftUsername?: string | null;
   authSource: string;
   hasJavaAccess: boolean;

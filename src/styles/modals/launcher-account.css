@@ -826,6 +826,315 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* =====================================================
+   Account Manager Pro Layout — 大型専用 GUI
+   ===================================================== */
+
+.acct-mgr-pro-sheet {
+  width: min(1120px, calc(100vw - 32px));
+  height: min(88vh, 820px);
+  max-height: min(88vh, 820px);
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(0, 164, 239, 0.12), transparent 32%),
+    radial-gradient(circle at 88% 4%, rgba(127, 186, 0, 0.12), transparent 30%),
+    var(--surface-2);
+}
+
+.acct-mgr-pro-sheet .acct-mgr-header {
+  padding: 22px 26px 18px;
+  background: linear-gradient(135deg, rgba(255,255,255,0.035), rgba(255,255,255,0.01));
+}
+
+.acct-mgr-pro-sheet .acct-mgr-icon {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 16px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-mid);
+}
+
+.acct-mgr-pro-sheet .acct-mgr-title {
+  font-size: 1.18rem;
+}
+
+.acct-mgr-dashboard {
+  display: grid;
+  grid-template-columns: minmax(240px, 1.7fr) repeat(3, minmax(120px, 1fr));
+  gap: 10px;
+  padding: 14px 18px 0;
+  flex-shrink: 0;
+}
+
+.acct-mgr-current-card,
+.acct-mgr-stat-card {
+  min-width: 0;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,0.035);
+  box-shadow: var(--shadow-sm);
+}
+
+.acct-mgr-current-card {
+  display: grid;
+  gap: 4px;
+  background: linear-gradient(135deg, var(--accent-soft), rgba(0, 164, 239, 0.07));
+  border-color: var(--accent-mid);
+}
+
+.acct-mgr-card-kicker,
+.acct-mgr-stat-card span {
+  font-size: 0.68rem;
+  color: var(--copy-muted);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.acct-mgr-current-card strong {
+  min-width: 0;
+  color: var(--copy);
+  font-size: 1.05rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.acct-mgr-current-card > span:last-child {
+  color: var(--copy-dim);
+  font-size: 0.78rem;
+}
+
+.acct-mgr-stat-card {
+  display: grid;
+  align-content: center;
+  gap: 4px;
+}
+
+.acct-mgr-stat-card strong {
+  color: var(--copy);
+  font-size: 1.45rem;
+  font-weight: 900;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.acct-mgr-stat-card.is-ready strong { color: var(--accent); }
+.acct-mgr-stat-card.is-detected strong { color: var(--info); }
+
+.acct-mgr-workspace {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 14px;
+  padding: 16px 18px 18px;
+}
+
+.acct-mgr-sidepanel,
+.acct-mgr-mainpanel {
+  min-height: 0;
+  border-radius: 22px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,0.026);
+}
+
+.acct-mgr-sidepanel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.acct-mgr-mainpanel {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: opacity 180ms;
+}
+
+.acct-mgr-mainpanel.is-busy {
+  opacity: 0.48;
+  pointer-events: none;
+}
+
+.acct-mgr-side-card,
+.acct-mgr-tool-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+.acct-mgr-side-card.is-primary {
+  background: linear-gradient(145deg, rgba(0, 164, 239, 0.11), rgba(127, 186, 0, 0.08));
+  border-color: rgba(0, 164, 239, 0.26);
+}
+
+.acct-mgr-side-icon {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+}
+
+.acct-mgr-side-card strong,
+.acct-mgr-tool-title {
+  color: var(--copy);
+  font-size: 0.86rem;
+  font-weight: 850;
+}
+
+.acct-mgr-side-card span:last-child {
+  color: var(--copy-dim);
+  font-size: 0.76rem;
+  line-height: 1.55;
+}
+
+.acct-mgr-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 40px;
+  padding: 9px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--surface-3);
+  color: var(--copy);
+  font-size: 0.84rem;
+}
+
+.acct-mgr-search-input:focus {
+  outline: none;
+  border-color: var(--accent-mid);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.acct-mgr-filter-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+}
+
+.acct-mgr-filter-grid button {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-3);
+  color: var(--copy-dim);
+  font-size: 0.74rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.acct-mgr-filter-grid button:hover,
+.acct-mgr-filter-grid button.is-active {
+  border-color: var(--accent-mid);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.acct-mgr-list-modern {
+  padding: 14px;
+  gap: 12px;
+}
+
+.acct-mgr-list-modern .acct-mgr-section {
+  padding: 14px;
+  border-radius: 20px;
+  background: rgba(255,255,255,0.028);
+}
+
+.acct-mgr-list-modern .acct-mgr-section-head {
+  grid-template-columns: 1fr auto;
+  align-items: end;
+  gap: 4px 12px;
+  padding-bottom: 4px;
+}
+
+.acct-mgr-list-modern .acct-mgr-section-head strong {
+  font-size: 0.94rem;
+}
+
+.acct-mgr-list-modern .acct-mgr-section-head span {
+  grid-column: 1 / -1;
+}
+
+.acct-mgr-list-modern .acct-mgr-row {
+  padding: 14px 16px;
+  border-radius: 18px;
+}
+
+.acct-mgr-list-modern .acct-mgr-avatar {
+  width: 50px;
+  height: 50px;
+  border-radius: 16px;
+}
+
+.acct-mgr-list-modern .acct-mgr-row-name {
+  font-size: 1rem;
+}
+
+.acct-mgr-list-modern .acct-mgr-mask-btn .acct-mgr-mask-text {
+  max-width: 280px;
+}
+
+.acct-mgr-sidepanel .acct-mgr-btn-sub {
+  width: 100%;
+}
+
+.acct-mgr-sidepanel .acct-mgr-mode-seg {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+@media (max-width: 900px) {
+  .acct-mgr-pro-sheet {
+    width: min(760px, calc(100vw - 20px));
+    height: min(92vh, 860px);
+  }
+
+  .acct-mgr-dashboard {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .acct-mgr-current-card {
+    grid-column: 1 / -1;
+  }
+
+  .acct-mgr-workspace {
+    grid-template-columns: 1fr;
+    overflow-y: auto;
+  }
+
+  .acct-mgr-mainpanel {
+    min-height: 420px;
+  }
+}
+
+@media (max-width: 620px) {
+  .acct-mgr-dashboard {
+    grid-template-columns: 1fr;
+  }
+
+  .acct-mgr-list-modern .acct-mgr-row {
+    align-items: flex-start;
+  }
+
+  .acct-mgr-row-status-actions {
+    justify-items: stretch;
+  }
+}
+
 /* ============================================================
    以下は旧スタイル（不使用・互換性のため残す）
    ============================================================ */
