@@ -6,7 +6,10 @@ type SettingsViewProps = {
   status: SoftwareStatus | null;
   busy: boolean;
   onToggleTempCache: (enabled: boolean) => void;
-  onChangePerformanceLiteMode: (mode: AppSettings["performanceLiteMode"]) => void;
+  onToggleOfflineMode: (enabled: boolean) => void;
+  onChangeOfflineUsername: (username: string) => void;
+  onToggleOfficialLauncherAutoInstall: (enabled: boolean) => void;
+  onEnsureOfficialLauncher: (reinstall?: boolean) => void;
   onEnsureJavaRuntime: () => void;
   onSelectCustomJavaPath: () => void;
   onClearCustomJavaPath: () => void;
@@ -21,7 +24,10 @@ export function SettingsView({
   status,
   busy,
   onToggleTempCache,
-  onChangePerformanceLiteMode,
+  onToggleOfflineMode,
+  onChangeOfflineUsername,
+  onToggleOfficialLauncherAutoInstall,
+  onEnsureOfficialLauncher,
   onEnsureJavaRuntime,
   onSelectCustomJavaPath,
   onClearCustomJavaPath,
@@ -30,18 +36,14 @@ export function SettingsView({
   onExportDebugLog,
   onOpenTempRoot,
 }: SettingsViewProps) {
-  const liteModeLabel =
-    settings?.performanceLiteMode === "on"
-      ? "常に有効"
-      : settings?.performanceLiteMode === "off"
-        ? "常に無効"
-        : "自動";
-
   const healthBadgeTone = settings?.tempCacheEnabled ? "is-healthy" : "is-neutral";
   const healthBadgeLabel = settings?.tempCacheEnabled
     ? "キャッシュ最適化: 稼働中"
     : "キャッシュ最適化: 停止中";
   const customJavaPath = settings?.customJavaPath ?? status?.customJavaPath ?? "";
+  const offlineModeEnabled = settings?.offlineModeEnabled ?? false;
+  const offlineUsername = settings?.offlineUsername ?? "";
+  const officialLauncherAutoInstall = settings?.officialLauncherAutoInstall ?? false;
 
   return (
     <section className="workspace settings-workspace">
@@ -52,7 +54,7 @@ export function SettingsView({
             <p className="eyebrow">Settings</p>
             <h2 className="header-title">ランチャー設定</h2>
             <p className="header-subtitle">
-              Temp キャッシュ・軽量モード・Java ランタイムを管理します
+              Temp キャッシュ・Java ランタイム・起動モードを管理します
             </p>
           </div>
           <div className={`settings-health-badge ${healthBadgeTone}`}>
@@ -70,8 +72,12 @@ export function SettingsView({
             </strong>
           </div>
           <div className="settings-stat">
-            <span>軽量モード</span>
-            <strong>{liteModeLabel}</strong>
+            <span>起動モード</span>
+            <strong>{offlineModeEnabled ? "オフライン" : "オンライン"}</strong>
+          </div>
+          <div className="settings-stat">
+            <span>公式 Launcher</span>
+            <strong>{status?.officialLauncherAvailable ? "検出済み" : "未検出"}</strong>
           </div>
           <div className="settings-stat">
             <span>キャッシュサイズ</span>
@@ -84,42 +90,100 @@ export function SettingsView({
         </div>
       </div>
 
-      {/* ===== 軽量モード ===== */}
+      {/* ===== 起動モード ===== */}
       <div className="settings-section">
-        <h3 className="settings-section-title">⚡ パフォーマンス</h3>
+        <h3 className="settings-section-title">🎮 起動モード</h3>
         <div className="settings-field panel">
           <div className="settings-field-header">
             <div>
-              <p className="settings-field-label">軽量モード</p>
+              <p className="settings-field-label">オフライン起動</p>
               <p className="settings-field-desc">
-                低スペック環境ではアニメーションを抑え、全体の応答性を優先します。
+                通常はオンラインモード推奨です。オフライン起動を有効にした場合のみ、下のユーザー名でローカル起動します。
               </p>
             </div>
           </div>
-          <div className="segmented" role="group" aria-label="軽量モード設定">
+          <div className="segmented" role="group" aria-label="起動モード設定">
             <button
               type="button"
-              className={settings?.performanceLiteMode === "auto" ? "is-active" : ""}
-              onClick={() => onChangePerformanceLiteMode("auto")}
+              className={!offlineModeEnabled ? "is-active" : ""}
+              onClick={() => onToggleOfflineMode(false)}
               disabled={busy || !settings}
             >
-              自動
+              オンライン
             </button>
             <button
               type="button"
-              className={settings?.performanceLiteMode === "on" ? "is-active" : ""}
-              onClick={() => onChangePerformanceLiteMode("on")}
+              className={offlineModeEnabled ? "is-active" : ""}
+              onClick={() => onToggleOfflineMode(true)}
               disabled={busy || !settings}
             >
-              常にON
+              オフライン
+            </button>
+          </div>
+          <label className="settings-path-row" style={{ marginTop: 14 }}>
+            <span className="settings-path-label">オフラインユーザー名</span>
+            <input
+              className="profile-name-input"
+              value={offlineUsername}
+              onChange={(event) => onChangeOfflineUsername(event.target.value)}
+              placeholder="例: Player"
+              disabled={busy || !settings}
+              maxLength={16}
+            />
+          </label>
+        </div>
+      </div>
+
+      {/* ===== 公式 Launcher ===== */}
+      <div className="settings-section">
+        <h3 className="settings-section-title">🟩 公式 Minecraft Launcher</h3>
+        <div className="settings-field panel">
+          <div className="settings-field-header">
+            <div>
+              <p className="settings-field-label">公式 Launcher の自動導入</p>
+              <p className="settings-field-desc">
+                公式 Launcher が見つからない場合に自動導入を試みます。既に導入済みの場合は「再インストール」で入れ直せます。
+              </p>
+            </div>
+          </div>
+          <div className="segmented" role="group" aria-label="公式 Launcher 自動導入設定">
+            <button
+              type="button"
+              className={!officialLauncherAutoInstall ? "is-active" : ""}
+              onClick={() => onToggleOfficialLauncherAutoInstall(false)}
+              disabled={busy || !settings}
+            >
+              手動
             </button>
             <button
               type="button"
-              className={settings?.performanceLiteMode === "off" ? "is-active" : ""}
-              onClick={() => onChangePerformanceLiteMode("off")}
+              className={officialLauncherAutoInstall ? "is-active" : ""}
+              onClick={() => onToggleOfficialLauncherAutoInstall(true)}
               disabled={busy || !settings}
             >
-              常にOFF
+              自動導入
+            </button>
+          </div>
+          <div className="settings-path-list" style={{ marginTop: 14 }}>
+            <div className="settings-path-row">
+              <span className="settings-path-label">導入状態</span>
+              <code className="settings-path-value">
+                {status?.officialLauncherAvailable ? "公式 Launcher を検出しました" : "公式 Launcher が見つかりません"}
+              </code>
+            </div>
+            <div className="settings-path-row">
+              <span className="settings-path-label">導入メモ</span>
+              <code className="settings-path-value">
+                {status?.officialLauncherInstaller ?? "取得中..."}
+              </code>
+            </div>
+          </div>
+          <div className="settings-field-actions">
+            <button className="secondary-button" onClick={() => onEnsureOfficialLauncher(false)} disabled={busy}>
+              公式 Launcher を確認 / 導入
+            </button>
+            <button className="danger-button" onClick={() => onEnsureOfficialLauncher(true)} disabled={busy}>
+              公式 Launcher を再インストール
             </button>
           </div>
         </div>

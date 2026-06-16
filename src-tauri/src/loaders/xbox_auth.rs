@@ -5,10 +5,13 @@ use std::{
     collections::{HashMap, HashSet},
     env, fs,
     path::{Path, PathBuf},
-    sync::OnceLock,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, OnceLock,
+    },
     time::Duration,
 };
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tokio::sync::Mutex;
 
 use super::MOJANG_USER_AGENT;
@@ -52,6 +55,11 @@ struct MinecraftServicesProfile {
 
 #[derive(Debug, Deserialize)]
 struct LauncherLoginResponse {
+    access_token: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct MicrosoftDeviceTokenResponse {
     access_token: String,
 }
 
@@ -687,6 +695,15 @@ pub(super) async fn exchange_rps_ticket_for_minecraft_auth(
     let _exchange_guard = xbox_auth_exchange_mutex().lock().await;
     let client = build_mojang_client()?;
 
+    app_log::append_log(
+        "INFO",
+        format!(
+            "xbox auth exchange start context={} rps_ticket_preview={}",
+            context,
+            preview_token(ticket)
+        ),
+    );
+
     let user_auth_response = post_json_with_retries(
         &client,
         "https://user.auth.xboxlive.com/user/authenticate",
@@ -705,15 +722,43 @@ pub(super) async fn exchange_rps_ticket_for_minecraft_auth(
         true,
     )
     .await?;
-    let user_auth = user_auth_response
-        .json::<XboxUserAuthenticateResponse>()
-        .await
-        .ok()?;
-    let uhs = user_auth
+    let user_auth = match user_auth_response.json::<XboxUserAuthenticateResponse>().await {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            app_log::append_log(
+                "WARN",
+                format!(
+                    "user/authenticate response parse failed context={} error={}",
+                    context, error
+                ),
+            );
+            return None;
+        }
+    };
+    app_log::append_log(
+        "INFO",
+        format!(
+            "user/authenticate succeeded context={} xbl_token_preview={}",
+            context,
+            preview_token(&user_auth.token)
+        ),
+    );
+    let Some(uhs) = user_auth
         .display_claims
         .as_ref()
         .and_then(|claims| claims.xui.first())
-        .and_then(|claim| claim.uhs.clone())?;
+        .and_then(|claim| claim.uhs.clone())
+    else {
+        app_log::append_log(
+            "WARN",
+            format!(
+                "user/authenticate succeeded but UHS was missing context={} claims_present={}",
+                context,
+                user_auth.display_claims.is_some()
+            ),
+        );
+        return None;
+    };
 
     let xsts_response = post_json_with_retries(
         &client,
@@ -732,10 +777,28 @@ pub(super) async fn exchange_rps_ticket_for_minecraft_auth(
         true,
     )
     .await?;
-    let xsts = xsts_response
-        .json::<XboxXstsAuthorizeResponse>()
-        .await
-        .ok()?;
+    let xsts = match xsts_response.json::<XboxXstsAuthorizeResponse>().await {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            app_log::append_log(
+                "WARN",
+                format!(
+                    "xsts/authorize response parse failed context={} error={}",
+                    context, error
+                ),
+            );
+            return None;
+        }
+    };
+    app_log::append_log(
+        "INFO",
+        format!(
+            "xsts/authorize succeeded context={} uhs_present={} xsts_token_preview={}",
+            context,
+            !uhs.trim().is_empty(),
+            preview_token(&xsts.token)
+        ),
+    );
     let xbox_identity = xbox_identity_from_display_claims(
         xsts.display_claims
             .as_ref()
@@ -747,6 +810,16 @@ pub(super) async fn exchange_rps_ticket_for_minecraft_auth(
         &format!("{context} -> xbl3"),
     )
     .await;
+
+    app_log::append_log(
+        if minecraft_access_token.is_some() { "INFO" } else { "WARN" },
+        format!(
+            "minecraft services exchange finished context={} success={} xbox_identity_present={}",
+            context,
+            minecraft_access_token.is_some(),
+            xbox_identity.is_some()
+        ),
+    );
 
     Some(RpsTicketExchangeResult {
         minecraft_access_token,
@@ -938,6 +1011,495 @@ pub(super) async fn ensure_xbox_rps_state(
         variant_label: None,
     })
 }
+
+pub(super) async fn start_xbox_sign_in(
+    app: Option<&AppHandle>,
+    operation_id: Option<&str>,
+) -> Result<crate::models::XboxSignInResult, String> {
+    let emit_auth_progress = |title: &str, detail: String, percent: f64| {
+        if let (Some(app), Some(operation_id)) = (app, operation_id) {
+            emit_progress(app, operation_id, title, detail, percent);
+        }
+    };
+
+    emit_auth_progress(
+        "Xbox サインイン",
+        "Microsoft OAuth の Xbox Live サインインを開始しています。".to_string(),
+        10.0,
+    );
+
+    let Some(client) = build_mojang_client() else {
+        return Err("Minecraft / Microsoft 認証用 HTTP クライアントを作成できませんでした。".to_string());
+    };
+
+    let Some(auth_code_session) = start_microsoft_auth_code_flow(
+        app,
+        |detail, percent| emit_auth_progress("Xbox サインイン", detail, percent),
+    )
+    .await? else {
+        emit_auth_progress(
+            "Xbox サインイン",
+            "Microsoft OAuth の認可コードを取得できませんでした。".to_string(),
+            100.0,
+        );
+        return Ok(crate::models::XboxSignInResult {
+            message: "Microsoft OAuth の認可コードを取得できませんでした。ブラウザーでサインインを完了してから再実行してください。".to_string(),
+            opened_xbox_sign_in: false,
+            refreshed: false,
+            succeeded: false,
+            account_count: 0,
+        });
+    };
+
+    emit_auth_progress(
+        "Xbox サインイン",
+        "Microsoft OAuth の認可コードを取得しました。アクセストークンへ交換しています。".to_string(),
+        25.0,
+    );
+
+    let Some(microsoft_token) = exchange_microsoft_auth_code_for_token(
+        &client,
+        &auth_code_session.code,
+        &auth_code_session.redirect_uri,
+    )
+    .await?
+    else {
+        return Ok(crate::models::XboxSignInResult {
+            message: "Microsoft サインインは完了しましたが、認可コードをアクセストークンへ交換できませんでした。デバッグログを確認してください。".to_string(),
+            opened_xbox_sign_in: true,
+            refreshed: false,
+            succeeded: false,
+            account_count: 0,
+        });
+    };
+
+    emit_auth_progress(
+        "Xbox サインイン",
+        "Microsoft トークンを取得しました。Xbox Live / Minecraft Services と交換しています。".to_string(),
+        70.0,
+    );
+
+    app_log::append_log(
+        "INFO",
+        format!(
+            "Microsoft device-code token acquired access_token_preview={}",
+            preview_token(&microsoft_token.access_token)
+        ),
+    );
+
+    let context = "device-code-xbox-sign-in";
+    let raw_rps_ticket = microsoft_token.access_token.clone();
+    let prefixed_rps_ticket = format!("d={}", microsoft_token.access_token);
+    let mut exchange = None;
+
+    for (ticket_kind, rps_ticket) in [
+        ("raw-access-token", raw_rps_ticket.as_str()),
+        ("d-prefixed-access-token", prefixed_rps_ticket.as_str()),
+    ] {
+        app_log::append_log(
+            "INFO",
+            format!(
+                "starting Microsoft token -> Xbox Live exchange context={} ticket_kind={} rps_ticket_preview={}",
+                context,
+                ticket_kind,
+                preview_token(rps_ticket)
+            ),
+        );
+
+        if let Some(found) = exchange_rps_ticket_for_minecraft_auth(rps_ticket, context).await {
+            app_log::append_log(
+                "INFO",
+                format!(
+                    "Microsoft token -> Xbox Live exchange succeeded context={} ticket_kind={}",
+                    context, ticket_kind
+                ),
+            );
+            exchange = Some(found);
+            break;
+        }
+
+        app_log::append_log(
+            "WARN",
+            format!(
+                "Microsoft token -> Xbox Live exchange failed context={} ticket_kind={}",
+                context, ticket_kind
+            ),
+        );
+    }
+
+    let Some(exchange) = exchange else {
+        emit_auth_progress(
+            "Xbox サインイン",
+            "Xbox Live へのトークン交換に失敗しました。".to_string(),
+            100.0,
+        );
+        return Ok(crate::models::XboxSignInResult {
+            message: "Microsoft ログインは完了しましたが、Xbox Live 認証への交換に失敗しました。デバッグログをエクスポートして user/authenticate または xsts/authorize の status / XErr / body を確認してください。".to_string(),
+            opened_xbox_sign_in: true,
+            refreshed: false,
+            succeeded: false,
+            account_count: 0,
+        });
+    };
+
+    let Some(minecraft_access_token) = exchange.minecraft_access_token else {
+        return Ok(crate::models::XboxSignInResult {
+            message: "Xbox 認証は完了しましたが、Minecraft Services のアクセストークンを取得できませんでした。".to_string(),
+            opened_xbox_sign_in: true,
+            refreshed: false,
+            succeeded: false,
+            account_count: 0,
+        });
+    };
+
+    let launcher_accounts = crate::minecraft::read_launcher_accounts().unwrap_or_default();
+    let java_access_hints = read_local_launcher_java_access_hints();
+    let Some((verified_profile, matched_account, _used_hint)) =
+        resolve_verified_minecraft_profile_with_xbox_identity(
+            &minecraft_access_token,
+            "device-code-xbox-sign-in -> minecraft/profile",
+            &launcher_accounts,
+            &java_access_hints,
+            exchange.xbox_identity.as_ref(),
+        )
+        .await
+    else {
+        return Ok(crate::models::XboxSignInResult {
+            message: "Microsoft / Xbox ログインは完了しましたが、Minecraft Java の所有確認ができませんでした。Java 版を所有しているアカウントで再試行してください。".to_string(),
+            opened_xbox_sign_in: true,
+            refreshed: false,
+            succeeded: false,
+            account_count: 0,
+        });
+    };
+
+    let mut account = matched_account.unwrap_or_default();
+    merge_verified_identity_into_launcher_account(&mut account, &verified_profile, None);
+    merge_xbox_identity_into_launcher_account(&mut account, exchange.xbox_identity.as_ref());
+    account.access_token = Some(minecraft_access_token.clone());
+    account.access_token_expires_at = access_token_expiry_rfc3339(&minecraft_access_token);
+    if account.local_id.as_deref().map(str::trim).filter(|value| !value.is_empty()).is_none() {
+        account.local_id = account
+            .xuid
+            .clone()
+            .or_else(|| Some(normalize_uuid_value(&verified_profile.0)));
+    }
+    if account.user_properties.as_deref().map(str::trim).filter(|value| !value.is_empty()).is_none() {
+        account.user_properties = Some("{}".to_string());
+    }
+    account.auth_source = Some("microsoft-oauth".to_string());
+    account.xbox_profile_verified = true;
+
+    let secure_token = SecureLaunchToken {
+        access_token: minecraft_access_token.clone(),
+        expires_at: access_token_expiry_rfc3339(&minecraft_access_token),
+        username: verified_profile.1.clone(),
+        uuid: normalize_uuid_value(&verified_profile.0),
+        xuid: account.xuid.clone().unwrap_or_default(),
+        user_properties: account
+            .user_properties
+            .clone()
+            .unwrap_or_else(|| "{}".to_string()),
+        user_type: "msa".to_string(),
+    };
+    if let Err(error) = persist_secure_launch_token(Some(&account), &secure_token) {
+        app_log::append_log(
+            "WARN",
+            format!("failed to persist secure token after device-code login: {error}"),
+        );
+    }
+
+    let account_count = crate::minecraft::merge_discovered_launcher_accounts(&[account])?;
+    emit_auth_progress(
+        "Xbox サインイン",
+        format!("Minecraft Java の所有を確認しました。アカウントを保存しました。追加/更新: {account_count} 件"),
+        100.0,
+    );
+
+    Ok(crate::models::XboxSignInResult {
+        message: "Microsoft OAuth で Xbox ログインし、Minecraft Java の所有確認とアカウント保存を完了しました。".to_string(),
+        opened_xbox_sign_in: true,
+        refreshed: true,
+        succeeded: true,
+        account_count,
+    })
+}
+
+fn url_query_encode(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(byte as char);
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
+}
+
+struct MicrosoftAuthCodeSession {
+    code: String,
+    redirect_uri: String,
+}
+
+async fn start_microsoft_auth_code_flow<F>(
+    app: Option<&AppHandle>,
+    mut emit: F,
+) -> Result<Option<MicrosoftAuthCodeSession>, String>
+where
+    F: FnMut(String, f64),
+{
+    let redirect_uri = "https://login.live.com/oauth20_desktop.srf".to_string();
+    let auth_url = microsoft_auth_code_url(&redirect_uri);
+
+    app_log::append_log(
+        "INFO",
+        format!(
+            "starting Microsoft auth-code flow redirect_uri={} auth_url_preview={}",
+            redirect_uri,
+            truncate_log_text(&auth_url, 220)
+        ),
+    );
+
+    if let Some(app) = app {
+        emit(
+            "Microsoft サインイン用 WebView を開きました。正しいアカウントでサインインしてください。".to_string(),
+            18.0,
+        );
+
+        return match wait_for_microsoft_auth_code_from_webview(app, &auth_url).await? {
+            MicrosoftAuthWebViewResult::Code(code) => {
+                Ok(Some(MicrosoftAuthCodeSession { code, redirect_uri }))
+            }
+            MicrosoftAuthWebViewResult::Cancelled => {
+                app_log::append_log(
+                    "INFO",
+                    "Microsoft OAuth WebView was closed by user; auth-code flow cancelled",
+                );
+                emit(
+                    "Microsoft サインインがキャンセルされました。必要な場合はもう一度ログインを開始してください。".to_string(),
+                    100.0,
+                );
+                Ok(None)
+            }
+            MicrosoftAuthWebViewResult::NoCode => {
+                app_log::append_log(
+                    "WARN",
+                    "Microsoft OAuth WebView did not return an auth code; auth-code flow stopped",
+                );
+                emit(
+                    "Microsoft OAuth の認可コードを取得できませんでした。WebView でサインインを完了してから再実行してください。".to_string(),
+                    100.0,
+                );
+                Ok(None)
+            }
+        };
+    }
+
+    app_log::append_log(
+        "WARN",
+        "Microsoft OAuth WebView is unavailable; auth-code flow cannot continue",
+    );
+    emit(
+        "Microsoft サインイン用 WebView を開けないため、認証を開始できませんでした。".to_string(),
+        100.0,
+    );
+    Ok(None)
+}
+
+enum MicrosoftAuthWebViewResult {
+    Code(String),
+    Cancelled,
+    NoCode,
+}
+
+async fn wait_for_microsoft_auth_code_from_webview(
+    app: &AppHandle,
+    auth_url: &str,
+) -> Result<MicrosoftAuthWebViewResult, String> {
+    let auth_url = auth_url
+        .parse()
+        .map_err(|error| format!("Microsoft OAuth auth URL parse failed: {error}"))?;
+    let label = "microsoft-oauth-sign-in";
+
+    if let Some(existing) = app.get_webview_window(label) {
+        let _ = existing.close();
+    }
+
+    let (sender, receiver) = std::sync::mpsc::channel::<MicrosoftAuthWebViewResult>();
+    let navigation_sender = sender.clone();
+    let close_sender = sender.clone();
+    let completed = Arc::new(AtomicBool::new(false));
+    let navigation_completed = Arc::clone(&completed);
+    let close_completed = Arc::clone(&completed);
+
+    let window = WebviewWindowBuilder::new(app, label, WebviewUrl::External(auth_url))
+        .title("Microsoft サインイン")
+        .inner_size(520.0, 720.0)
+        .resizable(true)
+        .center()
+        .on_navigation(move |url| {
+            let url_text = url.as_str();
+            if !is_microsoft_oauth_desktop_redirect(url_text) {
+                return true;
+            }
+
+            if let Some(error) = query_param_from_url_like_text(url_text, "error") {
+                app_log::append_log(
+                    "WARN",
+                    format!("Microsoft OAuth WebView returned error={}", error),
+                );
+                navigation_completed.store(true, Ordering::SeqCst);
+                let _ = navigation_sender.send(MicrosoftAuthWebViewResult::NoCode);
+                return false;
+            }
+
+            if let Some(code) = query_param_from_url_like_text(url_text, "code") {
+                app_log::append_log("INFO", "Microsoft OAuth auth-code captured from WebView");
+                navigation_completed.store(true, Ordering::SeqCst);
+                let _ = navigation_sender.send(MicrosoftAuthWebViewResult::Code(code));
+                return false;
+            }
+
+            true
+        })
+        .build()
+        .map_err(|error| format!("Microsoft OAuth WebView creation failed: {error}"))?;
+
+    window.on_window_event(move |event| match event {
+        WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed => {
+            if !close_completed.swap(true, Ordering::SeqCst) {
+                app_log::append_log(
+                    "INFO",
+                    "Microsoft OAuth WebView closed before auth-code capture; cancelling sign-in",
+                );
+                let _ = close_sender.send(MicrosoftAuthWebViewResult::Cancelled);
+            }
+        }
+        _ => {}
+    });
+
+    let timeout = Duration::from_secs(300);
+    let result = tokio::task::spawn_blocking(move || receiver.recv_timeout(timeout))
+        .await
+        .map_err(|error| format!("Microsoft OAuth WebView watcher task failed: {error}"))?;
+
+    completed.store(true, Ordering::SeqCst);
+    let _ = window.close();
+
+    match result {
+        Ok(code) => Ok(code),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            app_log::append_log("WARN", "Microsoft OAuth WebView watcher timed out");
+            Ok(MicrosoftAuthWebViewResult::NoCode)
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            app_log::append_log("WARN", "Microsoft OAuth WebView watcher disconnected");
+            Ok(MicrosoftAuthWebViewResult::NoCode)
+        }
+    }
+}
+
+fn microsoft_auth_code_url(redirect_uri: &str) -> String {
+    format!(
+        "https://login.live.com/oauth20_authorize.srf?prompt=select_account&client_id=00000000402b5328&response_type=code&scope={scope}&redirect_uri={redirect_uri}&lw=1&fl=dob%2Ceasi2&xsup=1&nopa=2",
+        scope = url_query_encode("service::user.auth.xboxlive.com::MBI_SSL"),
+        redirect_uri = url_query_encode(redirect_uri),
+    )
+}
+
+fn query_param_from_url_like_text(text: &str, key: &str) -> Option<String> {
+    let text = text.trim();
+    let query = if let Some((_, query_and_fragment)) = text.split_once('?') {
+        query_and_fragment
+    } else if text.contains('=') {
+        text
+    } else {
+        return None;
+    };
+    let query = query.split('#').next().unwrap_or(query);
+    for pair in query.split('&') {
+        let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
+        if name == key {
+            return Some(url_query_decode(value));
+        }
+    }
+    None
+}
+
+fn is_microsoft_oauth_desktop_redirect(text: &str) -> bool {
+    let text = text.trim().to_ascii_lowercase();
+    text.starts_with("https://login.live.com/oauth20_desktop.srf?")
+        || text.starts_with("https://login.live.com/oauth20_desktop.srf#")
+}
+
+fn url_query_decode(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'+' => {
+                output.push(b' ');
+                index += 1;
+            }
+            b'%' if index + 2 < bytes.len() => {
+                let hex = &value[index + 1..index + 3];
+                if let Ok(decoded) = u8::from_str_radix(hex, 16) {
+                    output.push(decoded);
+                    index += 3;
+                } else {
+                    output.push(bytes[index]);
+                    index += 1;
+                }
+            }
+            byte => {
+                output.push(byte);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&output).to_string()
+}
+
+async fn exchange_microsoft_auth_code_for_token(
+    client: &reqwest::Client,
+    code: &str,
+    redirect_uri: &str,
+) -> Result<Option<MicrosoftDeviceTokenResponse>, String> {
+    let token_url = format!(
+        "https://login.live.com/oauth20_token.srf?client_id=00000000402b5328&code={code}&redirect_uri={redirect_uri}&grant_type=authorization_code&scope={scope}",
+        code = url_query_encode(code),
+        redirect_uri = url_query_encode(redirect_uri),
+        scope = url_query_encode("service::user.auth.xboxlive.com::MBI_SSL"),
+    );
+    let response = client
+        .get(&token_url)
+        .send()
+        .await
+        .map_err(|error| format!("Microsoft OAuth auth-code token request failed: {error}"))?;
+
+    let status = response.status().as_u16();
+    let text = response.text().await.unwrap_or_default();
+    if (200..300).contains(&status) {
+        app_log::append_log("INFO", "Microsoft OAuth auth-code token exchange succeeded");
+        return serde_json::from_str::<MicrosoftDeviceTokenResponse>(&text)
+            .map(Some)
+            .map_err(|error| format!("Microsoft OAuth auth-code token response parse failed: {error}"));
+    }
+
+    app_log::append_log(
+        "WARN",
+        format!(
+            "Microsoft OAuth auth-code token exchange returned status {} body={}",
+            status,
+            truncate_log_text(&text, 800)
+        ),
+    );
+    Ok(None)
+}
+
 
 pub(super) fn is_access_token_expired(token: &str, expires_at: Option<&str>) -> bool {
     if let Some(expiry_text) = expires_at {
@@ -2357,13 +2919,14 @@ async fn post_json_with_retries(
         app_log::append_log(
             "WARN",
             format!(
-                "{} returned status {} attempt={}/{} context={} body={}",
+                "{} returned status {} attempt={}/{} context={} xbox_error={} body={}",
                 label,
                 status,
                 attempt,
                 max_attempts,
                 context,
-                truncate_log_text(&body, 160)
+                xbox_error_summary(&body),
+                truncate_log_text(&body, 800)
             ),
         );
 
@@ -2376,6 +2939,45 @@ async fn post_json_with_retries(
     }
 
     None
+}
+
+fn xbox_error_summary(body: &str) -> String {
+    let Ok(value) = serde_json::from_str::<Value>(body) else {
+        return "unparsed".to_string();
+    };
+
+    let identity = value
+        .get("Identity")
+        .and_then(Value::as_str)
+        .unwrap_or("-");
+    let xerr = value
+        .get("XErr")
+        .and_then(|entry| entry.as_i64().map(|value| value.to_string()).or_else(|| entry.as_str().map(str::to_string)))
+        .unwrap_or_else(|| "-".to_string());
+    let message = value
+        .get("Message")
+        .and_then(Value::as_str)
+        .filter(|entry| !entry.trim().is_empty())
+        .unwrap_or("-");
+    let redirect_present = value
+        .get("Redirect")
+        .and_then(Value::as_str)
+        .is_some_and(|entry| !entry.trim().is_empty());
+
+    let hint = match xerr.as_str() {
+        "2148916233" => "no-xbox-profile",
+        "2148916235" => "xbox-live-unavailable-region",
+        "2148916236" => "adult-verification-required",
+        "2148916237" => "age-verification-required",
+        "2148916238" => "child-account-family-required",
+        "2148916242" => "no-access",
+        _ => "unknown",
+    };
+
+    format!(
+        "identity={} xerr={} hint={} message={} redirect_present={}",
+        identity, xerr, hint, message, redirect_present
+    )
 }
 
 fn decode_base64_url(value: &str) -> Option<Vec<u8>> {

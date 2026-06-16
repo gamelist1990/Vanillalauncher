@@ -8,8 +8,68 @@ use std::{
 use tauri::AppHandle;
 use zip::ZipArchive;
 
-const JAVA_RUNTIME_DOWNLOAD_URL: &str =
-    "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse?project=jdk";
+#[derive(Debug, Clone, Copy)]
+struct JavaRuntimeSpec {
+    major: u32,
+    download_url: &'static str,
+}
+
+const MANAGED_JAVA_RUNTIMES: &[JavaRuntimeSpec] = &[
+    JavaRuntimeSpec {
+        major: 21,
+        download_url:
+            "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse?project=jdk",
+    },
+    JavaRuntimeSpec {
+        major: 25,
+        download_url:
+            "https://api.adoptium.net/v3/binary/latest/25/ga/windows/x64/jre/hotspot/normal/eclipse?project=jdk",
+    },
+];
+
+#[derive(Debug, Clone, Copy)]
+struct JavaRuntimeRule {
+    minecraft_major: u32,
+    minecraft_minor_or_newer: u32,
+    java_major: u32,
+}
+
+const JAVA_RUNTIME_RULES: &[JavaRuntimeRule] = &[
+    JavaRuntimeRule {
+        minecraft_major: 1,
+        minecraft_minor_or_newer: 26,
+        java_major: 25,
+    },
+    JavaRuntimeRule {
+        minecraft_major: 26,
+        minecraft_minor_or_newer: 0,
+        java_major: 25,
+    },
+];
+
+fn default_java_runtime() -> JavaRuntimeSpec {
+    managed_java_runtime_for_major(21)
+}
+
+fn managed_java_runtime_for_major(major: u32) -> JavaRuntimeSpec {
+    MANAGED_JAVA_RUNTIMES
+        .iter()
+        .copied()
+        .filter(|runtime| runtime.major >= major)
+        .min_by_key(|runtime| runtime.major)
+        .or_else(|| MANAGED_JAVA_RUNTIMES.iter().copied().max_by_key(|runtime| runtime.major))
+        .expect("managed Java runtime list must not be empty")
+}
+
+impl JavaRuntimeSpec {
+    fn archive_name(self) -> String {
+        format!("temurin-{}-runtime.zip", self.major)
+    }
+
+    fn install_dir(self) -> PathBuf {
+        settings::java_runtime_dir_for_major(self.major)
+    }
+}
 
 fn suppress_console_window(command: &mut Command) {
     #[cfg(windows)]
@@ -20,8 +80,44 @@ fn suppress_console_window(command: &mut Command) {
     }
 }
 
-pub(super) fn find_game_java_executable() -> Result<PathBuf, String> {
+pub(super) fn find_game_java_executable_for_version(
+    version_id: &str,
+    game_version: Option<&str>,
+) -> Result<PathBuf, String> {
+    let required_major = required_java_major_for_versions(version_id, game_version);
+    let runtime = managed_java_runtime_for_major(required_major);
+
     if let Some(java) = custom_java_executable()? {
+        if runtime.major >= 25 {
+            match java_major_version(&java) {
+                Some(major) if major >= runtime.major => {}
+                Some(major) => {
+                    crate::app_log::append_log(
+                        "WARN",
+                        format!(
+                            "custom Java {} is too old for Minecraft {} / {:?}; using managed Java {}",
+                            major,
+                            version_id,
+                            game_version,
+                            runtime.major
+                        ),
+                    );
+                    return managed_game_java_executable(runtime);
+                }
+                None => {
+                    crate::app_log::append_log(
+                        "WARN",
+                        format!(
+                            "custom Java version could not be detected for Minecraft {} / {:?}; using managed Java {}",
+                            version_id,
+                            game_version,
+                            runtime.major
+                        ),
+                    );
+                    return managed_game_java_executable(runtime);
+                }
+            }
+        }
         if cfg!(target_os = "windows") {
             let javaw = java.with_file_name("javaw.exe");
             if javaw.exists() {
@@ -32,12 +128,7 @@ pub(super) fn find_game_java_executable() -> Result<PathBuf, String> {
     }
 
     if cfg!(target_os = "windows") {
-        let java = ensure_managed_java_runtime(None)?;
-        let javaw = java.with_file_name("javaw.exe");
-        if javaw.exists() {
-            return Ok(javaw);
-        }
-        return Ok(java);
+        return managed_game_java_executable(runtime);
     }
 
     let java = find_java_executable()?;
@@ -48,6 +139,17 @@ pub(super) fn find_game_java_executable() -> Result<PathBuf, String> {
         }
     }
 
+    Ok(java)
+}
+
+fn managed_game_java_executable(runtime: JavaRuntimeSpec) -> Result<PathBuf, String> {
+    let java = ensure_managed_java_runtime_for(runtime, None)?;
+    if cfg!(target_os = "windows") {
+        let javaw = java.with_file_name("javaw.exe");
+        if javaw.exists() {
+            return Ok(javaw);
+        }
+    }
     Ok(java)
 }
 
@@ -64,7 +166,98 @@ pub(super) fn find_java_executable() -> Result<PathBuf, String> {
         return Ok(java);
     }
 
-    install_java_runtime(None)
+    install_java_runtime(default_java_runtime(), None)
+}
+
+fn java_major_version(java: &Path) -> Option<u32> {
+    let mut command = Command::new(java);
+    command.arg("-version");
+    suppress_console_window(&mut command);
+    let output = command.output().ok()?;
+    let text = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    for token in text.split(|character: char| !character.is_ascii_alphanumeric() && character != '.') {
+        if token.is_empty() {
+            continue;
+        }
+        if let Some(rest) = token.strip_prefix("1.") {
+            if let Some(value) = rest.split('.').next().and_then(|part| part.parse::<u32>().ok()) {
+                return Some(value);
+            }
+        }
+        if let Some(value) = token.split('.').next().and_then(|part| part.parse::<u32>().ok()) {
+            if value > 0 {
+                return Some(value);
+            }
+        }
+    }
+
+    None
+}
+
+fn required_java_major_for_versions(version_id: &str, game_version: Option<&str>) -> u32 {
+    [Some(version_id), game_version]
+        .into_iter()
+        .flatten()
+        .filter_map(required_java_major_for_minecraft_version)
+        .max()
+        .unwrap_or(default_java_runtime().major)
+}
+
+fn required_java_major_for_minecraft_version(value: &str) -> Option<u32> {
+    let versions = extract_version_number_candidates(value);
+    let mut required = None;
+
+    for version in versions {
+        for rule in JAVA_RUNTIME_RULES {
+            let matches = if rule.minecraft_major == 1 {
+                version.major == 1 && version.minor.is_some_and(|minor| minor >= rule.minecraft_minor_or_newer)
+            } else {
+                version.major >= rule.minecraft_major
+            };
+
+            if matches {
+                required = Some(required.unwrap_or(default_java_runtime().major).max(rule.java_major));
+            }
+        }
+    }
+
+    required
+}
+
+#[derive(Debug, Clone, Copy)]
+struct VersionNumberCandidate {
+    major: u32,
+    minor: Option<u32>,
+}
+
+fn extract_version_number_candidates(value: &str) -> Vec<VersionNumberCandidate> {
+    let mut candidates = Vec::new();
+
+    for token in value.split(|character: char| !character.is_ascii_digit() && character != '.') {
+        let trimmed = token.trim_matches('.');
+        if trimmed.is_empty() || !trimmed.chars().any(|character| character.is_ascii_digit()) {
+            continue;
+        }
+        let parts = trimmed
+            .split('.')
+            .filter(|part| !part.is_empty())
+            .filter_map(|part| part.parse::<u32>().ok())
+            .collect::<Vec<_>>();
+        let Some(major) = parts.first().copied() else {
+            continue;
+        };
+        candidates.push(VersionNumberCandidate {
+            major,
+            minor: parts.get(1).copied(),
+        });
+    }
+
+    candidates
 }
 
 fn custom_java_executable() -> Result<Option<PathBuf>, String> {
@@ -104,16 +297,34 @@ pub(super) fn ensure_java_runtime_available_with_progress(
 pub(super) fn ensure_managed_java_runtime(
     progress: Option<(&AppHandle, &str)>,
 ) -> Result<PathBuf, String> {
+    ensure_managed_java_runtime_for(default_java_runtime(), progress)
+}
+
+fn ensure_managed_java_runtime_for(
+    runtime: JavaRuntimeSpec,
+    progress: Option<(&AppHandle, &str)>,
+) -> Result<PathBuf, String> {
     if !cfg!(target_os = "windows") {
         return find_java_executable();
     }
 
-    let install_dir = java_runtime_install_dir();
+    let install_dir = java_runtime_install_dir(runtime);
     if let Some(java) = discover_java_in_directory(&install_dir) {
-        return Ok(java);
+        if java_major_version(&java).is_some_and(|major| major >= runtime.major) {
+            return Ok(java);
+        }
+        crate::app_log::append_log(
+            "WARN",
+            format!(
+                "managed Java runtime in {} is older than required {}; reinstalling",
+                install_dir.display(),
+                runtime.major
+            ),
+        );
+        let _ = fs::remove_dir_all(&install_dir);
     }
 
-    install_java_runtime(progress)
+    install_java_runtime(runtime, progress)
 }
 
 fn discover_java_executable() -> Option<PathBuf> {
@@ -174,7 +385,10 @@ fn discover_java_executable() -> Option<PathBuf> {
     }
 }
 
-fn install_java_runtime(progress: Option<(&AppHandle, &str)>) -> Result<PathBuf, String> {
+fn install_java_runtime(
+    runtime: JavaRuntimeSpec,
+    progress: Option<(&AppHandle, &str)>,
+) -> Result<PathBuf, String> {
     if !cfg!(target_os = "windows") {
         return Err("Java が見つかりませんでした。Java をインストールしてください。".to_string());
     }
@@ -184,23 +398,25 @@ fn install_java_runtime(progress: Option<(&AppHandle, &str)>) -> Result<PathBuf,
             app,
             operation_id,
             "Java ランタイムを準備中",
-            "Java ランタイムのダウンロードを開始しています。",
+            format!("Java {} ランタイムのダウンロードを開始しています。", runtime.major),
             12.0,
         );
     }
 
-    let install_dir = java_runtime_install_dir();
+    let install_dir = java_runtime_install_dir(runtime);
     if let Some(java) = discover_java_in_directory(&install_dir) {
-        if let Some((app, operation_id)) = progress {
-            emit_progress(
-                app,
-                operation_id,
-                "Java ランタイムを準備中",
-                "既存の Java ランタイムを使用します。",
-                100.0,
-            );
+        if java_major_version(&java).is_some_and(|major| major >= runtime.major) {
+            if let Some((app, operation_id)) = progress {
+                emit_progress(
+                    app,
+                    operation_id,
+                    "Java ランタイムを準備中",
+                    "既存の Java ランタイムを使用します。",
+                    100.0,
+                );
+            }
+            return Ok(java);
         }
-        return Ok(java);
     }
 
     if install_dir.exists() {
@@ -217,8 +433,8 @@ fn install_java_runtime(progress: Option<(&AppHandle, &str)>) -> Result<PathBuf,
     let archive_path = install_dir
         .parent()
         .unwrap_or(install_dir.as_path())
-        .join("temurin-21-runtime.zip");
-    download_java_runtime_archive(&archive_path)?;
+        .join(runtime.archive_name());
+    download_java_runtime_archive(runtime, &archive_path)?;
 
     if let Some((app, operation_id)) = progress {
         emit_progress(
@@ -242,7 +458,7 @@ fn install_java_runtime(progress: Option<(&AppHandle, &str)>) -> Result<PathBuf,
     })
 }
 
-fn download_java_runtime_archive(target_path: &Path) -> Result<(), String> {
+fn download_java_runtime_archive(runtime: JavaRuntimeSpec, target_path: &Path) -> Result<(), String> {
     if let Some(parent) = target_path.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("{} を準備できませんでした: {error}", parent.display()))?;
@@ -251,7 +467,7 @@ fn download_java_runtime_archive(target_path: &Path) -> Result<(), String> {
     let escaped_output = target_path.to_string_lossy().replace('"', "``\"");
     let script = format!(
         "$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '{url}' -OutFile \"{out}\" -UseBasicParsing",
-        url = JAVA_RUNTIME_DOWNLOAD_URL,
+        url = runtime.download_url,
         out = escaped_output
     );
     let mut command = Command::new("powershell");
@@ -339,8 +555,8 @@ fn extract_java_runtime_archive(
     Ok(())
 }
 
-fn java_runtime_install_dir() -> PathBuf {
-    settings::java_runtime_dir()
+fn java_runtime_install_dir(runtime: JavaRuntimeSpec) -> PathBuf {
+    runtime.install_dir()
 }
 
 fn discover_java_in_directory(dir: &Path) -> Option<PathBuf> {

@@ -162,14 +162,22 @@ pub async fn search_modrinth_mods(
     query: String,
     loader: Option<String>,
     game_version: Option<String>,
+    limit: Option<u64>,
+    offset: Option<u64>,
 ) -> Result<Vec<ModrinthProject>, String> {
+    let offset = offset.unwrap_or(0);
     let normalized_loader = normalize_loader(loader.as_deref()).to_string();
     let trimmed_game_version = game_version
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string);
-    let mut projects = search_projects(query.clone(), "mod", loader, game_version).await?;
+    let mut projects = search_projects(query.clone(), "mod", loader, game_version, limit, offset).await?;
+
+    if offset > 0 {
+        return Ok(projects);
+    }
+
     if let Some(project) = resolve_curseforge_project_query(
         query.trim(),
         &normalized_loader,
@@ -195,8 +203,10 @@ pub async fn search_modrinth_mods(
 pub async fn search_modrinth_modpacks(
     query: String,
     game_version: Option<String>,
+    limit: Option<u64>,
+    offset: Option<u64>,
 ) -> Result<Vec<ModrinthProject>, String> {
-    search_projects(query, "modpack", None, game_version).await
+    search_projects(query, "modpack", None, game_version, limit, offset.unwrap_or(0)).await
 }
 
 pub async fn get_modrinth_modpack_versions(
@@ -223,15 +233,20 @@ async fn search_projects(
     project_type: &str,
     loader: Option<String>,
     game_version: Option<String>,
+    limit: Option<u64>,
+    offset: u64,
 ) -> Result<Vec<ModrinthProject>, String> {
     let trimmed = normalize_search_query(&query);
+    let limit = limit.unwrap_or(18).clamp(1, 100).to_string();
+    let offset = offset.to_string();
 
     let loader_filter = normalize_loader(loader.as_deref());
     let facets = build_search_facets(project_type, loader_filter, game_version.as_deref())?;
     let client = modrinth_client()?;
     let mut request = client.get(format!("{MODRINTH_API_BASE}/search"));
     request = request.query(&[
-        ("limit", "18"),
+        ("limit", limit.as_str()),
+        ("offset", offset.as_str()),
         (
             "index",
             if trimmed.is_empty() {
@@ -248,7 +263,7 @@ async fn search_projects(
     }
 
     let cache_key = format!(
-        "search|{project_type}|{loader_filter}|{}|{trimmed}",
+        "search|{project_type}|{loader_filter}|{}|{trimmed}|{limit}|{offset}",
         game_version
             .as_deref()
             .map(str::trim)

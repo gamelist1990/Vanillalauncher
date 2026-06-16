@@ -10,6 +10,7 @@ import type { ModrinthProject } from "../app/types";
 type DiscoverResultRowProps = {
   project: ModrinthProject;
   mode: "mods" | "modpacks";
+  layout?: "list" | "grid";
   disabled: boolean;
   installState: "install" | "update" | "installed" | "blocked";
   installed: boolean;
@@ -22,6 +23,7 @@ type DiscoverResultRowProps = {
 export function DiscoverResultRow({
   project,
   mode,
+  layout = "list",
   disabled,
   installState,
   installed,
@@ -58,7 +60,7 @@ export function DiscoverResultRow({
 
   return (
     <article
-      className="discover-result-row"
+      className={`discover-result-row discover-result-row--${layout}`}
       onClick={onOpenDetail}
       role="button"
       tabIndex={0}

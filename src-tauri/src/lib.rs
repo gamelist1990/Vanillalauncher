@@ -10,6 +10,7 @@ use models::{
     ActionResult, FabricCatalog, FabricInstallResult, InstallResult, LaunchResult,
     LauncherSnapshot, LoaderCatalog, LoaderInstallResult, LocalModAnalysis, ModRemoteState, ModpackExportResult,
     ModpackInstallResult, ModpackVersionSummary, ModrinthProject, XboxRpsStateResult,
+    XboxSignInResult,
 };
 use settings::{AppSettings, DebugExportResult, PerformanceLiteMode, SoftwareStatus};
 
@@ -48,16 +49,20 @@ async fn search_modrinth_mods(
     query: String,
     loader: Option<String>,
     game_version: Option<String>,
+    limit: Option<u64>,
+    offset: Option<u64>,
 ) -> Result<Vec<ModrinthProject>, String> {
-    modrinth::search_modrinth_mods(query, loader, game_version).await
+    modrinth::search_modrinth_mods(query, loader, game_version, limit, offset).await
 }
 
 #[tauri::command]
 async fn search_modrinth_modpacks(
     query: String,
     game_version: Option<String>,
+    limit: Option<u64>,
+    offset: Option<u64>,
 ) -> Result<Vec<ModrinthProject>, String> {
-    modrinth::search_modrinth_modpacks(query, game_version).await
+    modrinth::search_modrinth_modpacks(query, game_version, limit, offset).await
 }
 #[tauri::command]
 async fn import_local_modpack(
@@ -194,6 +199,11 @@ fn set_active_launcher_account(local_id: String) -> Result<ActionResult, String>
 }
 
 #[tauri::command]
+fn logout_microsoft_launcher_account(local_id: String) -> Result<ActionResult, String> {
+    loaders::logout_microsoft_launcher_account(local_id)
+}
+
+#[tauri::command]
 async fn scan_launcher_accounts(
     app: tauri::AppHandle,
     operation_id: Option<String>,
@@ -321,8 +331,35 @@ fn update_app_settings(
     temp_cache_enabled: bool,
     performance_lite_mode: PerformanceLiteMode,
     custom_java_path: Option<String>,
+    offline_mode_enabled: Option<bool>,
+    offline_username: Option<String>,
+    official_launcher_auto_install: Option<bool>,
 ) -> Result<ActionResult, String> {
-    settings::update_app_settings(temp_cache_enabled, performance_lite_mode, custom_java_path)
+    settings::update_app_settings(
+        temp_cache_enabled,
+        performance_lite_mode,
+        custom_java_path,
+        offline_mode_enabled,
+        offline_username,
+        official_launcher_auto_install,
+    )
+}
+
+#[tauri::command]
+async fn ensure_official_launcher_available(
+    app: tauri::AppHandle,
+    operation_id: Option<String>,
+    reinstall: Option<bool>,
+) -> Result<ActionResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        minecraft::ensure_official_launcher_available_with_progress(
+            &app,
+            operation_id,
+            reinstall.unwrap_or(false),
+        )
+    })
+    .await
+    .map_err(|error| format!("公式 Launcher 準備ジョブの実行に失敗しました: {error}"))?
 }
 
 #[tauri::command]
@@ -379,6 +416,14 @@ async fn ensure_xbox_rps_state(
     loaders::ensure_xbox_rps_state(Some(&app), operation_id.as_deref()).await
 }
 
+#[tauri::command]
+async fn start_xbox_sign_in(
+    app: tauri::AppHandle,
+    operation_id: Option<String>,
+) -> Result<XboxSignInResult, String> {
+    loaders::start_xbox_sign_in(Some(&app), operation_id.as_deref()).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // アプリケーション起動時にログファイルをクリア
@@ -405,6 +450,7 @@ pub fn run() {
             update_profile_visuals,
             update_profile_name,
             set_active_launcher_account,
+            logout_microsoft_launcher_account,
             scan_launcher_accounts,
             uninstall_modrinth_project,
             set_mod_enabled,
@@ -422,12 +468,14 @@ pub fn run() {
             get_app_settings,
             update_app_settings,
             ensure_java_runtime_available,
+            ensure_official_launcher_available,
             clear_temp_cache,
             read_temp_cache_json,
             write_temp_cache_json,
             get_software_status,
             export_debug_log,
             clear_log,
+            start_xbox_sign_in,
             ensure_xbox_rps_state
         ])
         .run(tauri::generate_context!())

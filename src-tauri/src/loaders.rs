@@ -9,6 +9,7 @@ use crate::{
         read_launcher_accounts,
         launcher_account_email_local_part,
         merge_launcher_account_fields,
+        remove_microsoft_oauth_launcher_account as remove_microsoft_oauth_launcher_account_in_minecraft,
         scan_and_merge_launcher_accounts as scan_and_merge_launcher_accounts_in_minecraft,
         set_active_launcher_account as set_active_launcher_account_in_minecraft,
         set_java_page_as_last_visited, set_profile_last_used, sync_profile_mods_to_game_dir,
@@ -16,7 +17,8 @@ use crate::{
     },
     models::{
         ActionResult, FabricCatalog, FabricInstallResult, LaunchResult, LauncherAccountEntry,
-        LoaderCatalog, LoaderInstallResult, LoaderVersionSummary, MinecraftVersionSummary,
+        LoaderCatalog, LoaderInstallResult, LoaderVersionSummary, XboxSignInResult,
+        MinecraftVersionSummary,
     },
     progress::emit_progress,
 };
@@ -228,6 +230,13 @@ pub async fn ensure_xbox_rps_state(
     xbox_auth::ensure_xbox_rps_state(app, operation_id).await
 }
 
+pub async fn start_xbox_sign_in(
+    app: Option<&AppHandle>,
+    operation_id: Option<&str>,
+) -> Result<XboxSignInResult, String> {
+    xbox_auth::start_xbox_sign_in(app, operation_id).await
+}
+
 pub fn get_launcher_accounts() -> Result<Vec<LauncherAccountEntry>, String> {
     let accounts = read_launcher_accounts()?;
     let discovered_accounts = match read_discovered_launcher_accounts_in_minecraft() {
@@ -243,13 +252,29 @@ pub fn get_launcher_accounts() -> Result<Vec<LauncherAccountEntry>, String> {
     let active_local_id = read_active_launcher_account()?.and_then(|account| account.local_id);
     let java_access_hints = xbox_auth::read_local_launcher_java_access_hints();
     let mut seen_identity_keys = HashSet::new();
-    let mut merged_accounts = accounts
+    let mut microsoft_oauth_accounts = Vec::new();
+    let mut pc_discovered_accounts = Vec::new();
+
+    for discovered_account in discovered_accounts {
+        if discovered_account.auth_source.as_deref() == Some("microsoft-oauth") {
+            microsoft_oauth_accounts.push(discovered_account);
+        } else {
+            pc_discovered_accounts.push(discovered_account);
+        }
+    }
+
+    let mut merged_accounts = microsoft_oauth_accounts
+        .into_iter()
+        .map(|account| (account, true, "microsoft-oauth".to_string()))
+        .collect::<Vec<_>>();
+
+    merged_accounts.extend(accounts
         .iter()
         .cloned()
         .map(|account| (account, true, "official-launcher".to_string()))
-        .collect::<Vec<_>>();
+        .collect::<Vec<_>>());
 
-    for discovered_account in discovered_accounts {
+    for discovered_account in pc_discovered_accounts {
         if let Some((target, _, _)) = merged_accounts
             .iter_mut()
             .find(|(account, _, _)| launcher_accounts_share_identity(account, &discovered_account))
@@ -396,6 +421,7 @@ fn build_launcher_account_entry(
         local_id: local_id.clone(),
         username: display_name,
         gamer_tag: account.gamer_tag.clone(),
+        xuid: account.xuid.clone(),
         microsoft_username: account.username.clone(),
         auth_source: auth_source.to_string(),
         has_java_access: xbox_auth::launcher_account_has_java_access_hint(
@@ -404,6 +430,19 @@ fn build_launcher_account_entry(
         ),
         is_active: active_local_id == Some(local_id.as_str()),
         is_selectable,
+        can_logout: auth_source == "microsoft-oauth",
+    })
+}
+
+pub fn logout_microsoft_launcher_account(local_id: String) -> Result<ActionResult, String> {
+    let removed = remove_microsoft_oauth_launcher_account_in_minecraft(&local_id)?;
+    xbox_auth::clear_secure_launch_token(Some(&removed));
+    let display_name = crate::minecraft::preferred_launcher_account_display_name(&removed)
+        .unwrap_or_else(|| "Microsoft アカウント".to_string());
+
+    Ok(ActionResult {
+        message: format!("{display_name} からログアウトしました。"),
+        file_name: local_id,
     })
 }
 
@@ -474,6 +513,7 @@ fn cached_xbox_account_hint_to_launcher_account(
         xuid,
         local_id: Some(local_id),
         user_properties: None,
+        auth_source: Some("pc-scan".to_string()),
         xbox_profile_verified,
     })
 }
@@ -673,7 +713,10 @@ async fn prepare_direct_launch(
         .map_err(|error| format!("{} を準備できませんでした: {error}", profile.game_dir))?;
 
     let merged = ensure_version_ready(minecraft_root, version_id).await?;
-    let java_path = find_game_java_executable()?;
+    let java_path = find_game_java_executable_for_version(
+        version_id,
+        profile.game_version.as_deref(),
+    )?;
     let auth = launch_helpers::resolve_launch_auth().await?;
     let native_dir =
         launch_helpers::prepare_native_directory(minecraft_root, version_id, &merged.libraries)?;
@@ -985,8 +1028,11 @@ async fn ensure_asset_objects(
     Ok(())
 }
 
-fn find_game_java_executable() -> Result<PathBuf, String> {
-    java_runtime::find_game_java_executable()
+fn find_game_java_executable_for_version(
+    version_id: &str,
+    game_version: Option<&str>,
+) -> Result<PathBuf, String> {
+    java_runtime::find_game_java_executable_for_version(version_id, game_version)
 }
 
 fn find_java_executable() -> Result<PathBuf, String> {

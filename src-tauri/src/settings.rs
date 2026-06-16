@@ -32,6 +32,12 @@ pub struct AppSettings {
     pub performance_lite_mode: PerformanceLiteMode,
     #[serde(default)]
     pub custom_java_path: Option<String>,
+    #[serde(default)]
+    pub offline_mode_enabled: bool,
+    #[serde(default)]
+    pub offline_username: Option<String>,
+    #[serde(default)]
+    pub official_launcher_auto_install: bool,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -42,6 +48,8 @@ pub struct SoftwareStatus {
     pub settings_path: String,
     pub java_runtime_dir: String,
     pub custom_java_path: Option<String>,
+    pub official_launcher_available: bool,
+    pub official_launcher_installer: String,
     pub app_log_path: String,
     pub temp_cache_enabled: bool,
     pub cache_file_count: usize,
@@ -61,7 +69,13 @@ pub fn temp_root_dir() -> PathBuf {
 }
 
 pub fn java_runtime_dir() -> PathBuf {
-    temp_root_dir().join("java-runtime").join("temurin-21")
+    java_runtime_dir_for_major(21)
+}
+
+pub fn java_runtime_dir_for_major(major: u32) -> PathBuf {
+    temp_root_dir()
+        .join("java-runtime")
+        .join(format!("temurin-{major}"))
 }
 
 pub fn cache_dir() -> PathBuf {
@@ -117,6 +131,9 @@ pub fn default_settings() -> AppSettings {
         temp_cache_enabled: true,
         performance_lite_mode: PerformanceLiteMode::Auto,
         custom_java_path: None,
+        offline_mode_enabled: false,
+        offline_username: None,
+        official_launcher_auto_install: false,
     }
 }
 
@@ -151,12 +168,19 @@ pub fn update_app_settings(
     temp_cache_enabled: bool,
     performance_lite_mode: PerformanceLiteMode,
     custom_java_path: Option<String>,
+    offline_mode_enabled: Option<bool>,
+    offline_username: Option<String>,
+    official_launcher_auto_install: Option<bool>,
 ) -> Result<ActionResult, String> {
     let custom_java_path = normalize_custom_java_path(custom_java_path)?;
+    let offline_username = normalize_offline_username(offline_username)?;
     let settings = AppSettings {
         temp_cache_enabled,
         performance_lite_mode,
         custom_java_path,
+        offline_mode_enabled: offline_mode_enabled.unwrap_or(false),
+        offline_username,
+        official_launcher_auto_install: official_launcher_auto_install.unwrap_or(false),
     };
     save_settings(&settings)?;
 
@@ -172,7 +196,7 @@ pub fn clear_temp_cache() -> Result<ActionResult, String> {
         frontend_cache_dir(),
         loader_cache_dir(),
         loader_stage_dir(),
-        java_runtime_dir(),
+        temp_root_dir().join("java-runtime"),
     ] {
         if cache.exists() {
             fs::remove_dir_all(&cache)
@@ -251,6 +275,10 @@ pub fn get_software_status() -> Result<SoftwareStatus, String> {
         settings_path: settings_path().to_string_lossy().to_string(),
         java_runtime_dir: java_runtime_dir().to_string_lossy().to_string(),
         custom_java_path: settings.custom_java_path.clone(),
+        official_launcher_available: crate::minecraft::launcher_available(),
+        official_launcher_installer: crate::minecraft::official_launcher_installer_path()
+            .to_string_lossy()
+            .to_string(),
         app_log_path: crate::app_log::log_file_path()
             .to_string_lossy()
             .to_string(),
@@ -301,6 +329,33 @@ fn normalize_custom_java_path(path: Option<String>) -> Result<Option<String>, St
     }
     let java = validate_custom_java_path(trimmed)?;
     Ok(Some(java.to_string_lossy().to_string()))
+}
+
+pub fn sanitize_offline_username(value: &str) -> String {
+    let mut sanitized = String::new();
+    for character in value.trim().chars() {
+        if character.is_ascii_alphanumeric() || character == '_' {
+            sanitized.push(character);
+        }
+        if sanitized.len() >= 16 {
+            break;
+        }
+    }
+    sanitized
+}
+
+fn normalize_offline_username(username: Option<String>) -> Result<Option<String>, String> {
+    let Some(username) = username else {
+        return Ok(None);
+    };
+    let sanitized = sanitize_offline_username(&username);
+    if sanitized.is_empty() {
+        return Ok(None);
+    }
+    if sanitized.len() < 3 {
+        return Err("オフラインユーザー名は 3〜16 文字の英数字または _ で入力してください。".to_string());
+    }
+    Ok(Some(sanitized))
 }
 
 pub fn export_debug_log() -> Result<DebugExportResult, String> {

@@ -63,7 +63,12 @@ pub(super) fn build_launch_arguments(
     let mut arguments = Vec::new();
 
     for argument in collect_argument_values(&manifest.jvm_arguments, &features) {
-        arguments.push(replace_placeholders(&argument, &replacements));
+        let argument = replace_placeholders(&argument, &replacements);
+        if argument == "--sun-misc-unsafe-memory-access=allow" {
+            app_log::append_log("INFO", "removed unsupported JVM option --sun-misc-unsafe-memory-access=allow");
+            continue;
+        }
+        arguments.push(argument);
     }
 
     if let Some(logging_argument) = manifest.logging_argument.as_deref() {
@@ -199,7 +204,41 @@ pub(super) fn extract_native_archive(archive_path: &Path, target_dir: &Path) -> 
 }
 
 pub(super) async fn resolve_launch_auth() -> Result<VersionLaunchAuth, String> {
+    let settings = crate::settings::load_settings();
     let account = read_active_launcher_account()?;
+
+    if settings.offline_mode_enabled {
+        let client_id = account
+            .as_ref()
+            .and_then(|account| account.local_id.clone())
+            .or_else(|| account.as_ref().and_then(|account| account.client_token.clone()))
+            .unwrap_or_else(|| "vanillalauncher".to_string());
+        let offline_username = settings
+            .offline_username
+            .as_deref()
+            .map(crate::settings::sanitize_offline_username)
+            .filter(|value| value.len() >= 3)
+            .unwrap_or_else(|| offline_username_for_account(account.as_ref()));
+        let offline_uuid = offline_uuid_for_username(&offline_username);
+        app_log::append_log(
+            "INFO",
+            format!(
+                "explicit offline launch identity username={} uuid={}",
+                offline_username, offline_uuid
+            ),
+        );
+        return Ok(VersionLaunchAuth {
+            username: offline_username,
+            uuid: offline_uuid,
+            access_token: "0".to_string(),
+            client_id,
+            xuid: "0".to_string(),
+            user_properties: "{}".to_string(),
+            user_type: "legacy".to_string(),
+            mode: "direct-offline-selected".to_string(),
+        });
+    }
+
     let launcher_accounts = read_launcher_accounts()?;
     let java_access_hints = xbox_auth::read_local_launcher_java_access_hints();
     app_log::append_log(
@@ -496,10 +535,10 @@ pub(super) async fn resolve_launch_auth() -> Result<VersionLaunchAuth, String> {
             (token, Some(profile), matched_account, mode)
         } else if let Some((token, profile, matched_account, mode)) = xbox_profile {
             (token, Some(profile), matched_account, mode)
-        } else if account.is_some() {
+        } else if settings.offline_mode_enabled {
             app_log::append_log(
                 "INFO",
-                "using selected launcher account as offline fallback",
+                "using explicit offline launch mode",
             );
             (
                 "0".to_string(),
@@ -507,6 +546,10 @@ pub(super) async fn resolve_launch_auth() -> Result<VersionLaunchAuth, String> {
                 account.clone(),
                 "direct-offline-selected".to_string(),
             )
+        } else if account.is_some() {
+            return Err(
+                "オンラインモードのため起動を停止しました。選択中の Microsoft アカウントで Minecraft Java の所有権を確認できません。オフライン起動へ自動フォールバックしません。アカウント画面で Java 所有確認を行うか、設定で明示的にオフライン起動を有効にしてください。".to_string(),
+            );
         } else {
             ("0".to_string(), None, None, "direct-runtime".to_string())
         };
@@ -577,7 +620,12 @@ pub(super) async fn resolve_launch_auth() -> Result<VersionLaunchAuth, String> {
     }
 
     if mode == "direct-offline-selected" {
-        let offline_username = offline_username_for_account(metadata_account.or(account.as_ref()));
+        let offline_username = settings
+            .offline_username
+            .as_deref()
+            .map(crate::settings::sanitize_offline_username)
+            .filter(|value| value.len() >= 3)
+            .unwrap_or_else(|| offline_username_for_account(metadata_account.or(account.as_ref())));
         let offline_uuid = offline_uuid_for_username(&offline_username);
         app_log::append_log(
             "INFO",
@@ -1069,6 +1117,7 @@ mod tests {
             xuid: xuid.map(str::to_string),
             local_id: Some(local_id.to_string()),
             user_properties: None,
+            auth_source: None,
             xbox_profile_verified: false,
         }
     }

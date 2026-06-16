@@ -67,7 +67,7 @@ export function Sidebar({
             }}
           >
             <span className="nav-label">
-              <strong style={{ fontSize: "1.05rem" }}>{item.label}</strong>
+              <strong>{item.label}</strong>
               <span className="nav-kicker">{item.kicker}</span>
             </span>
           </button>

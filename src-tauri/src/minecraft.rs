@@ -23,6 +23,8 @@ use crate::loaders::is_profile_launch_active;
 
 const WINDOWS_STORE_AUMID: &str =
     "shell:AppsFolder\\Microsoft.4297127D64EC6_8wekyb3d8bbwe!Minecraft";
+const WINDOWS_STORE_PRODUCT_URI: &str = "ms-windows-store://pdp/?ProductId=9PGW18NPBZV5";
+const WINGET_MINECRAFT_LAUNCHER_ID: &str = "Microsoft.MinecraftLauncher";
 
 #[derive(Debug, Clone)]
 pub struct CustomProfileDraft {
@@ -88,6 +90,8 @@ pub struct LauncherAccount {
     pub xuid: Option<String>,
     pub local_id: Option<String>,
     pub user_properties: Option<String>,
+    #[serde(default)]
+    pub auth_source: Option<String>,
     #[serde(default)]
     pub xbox_profile_verified: bool,
 }
@@ -464,6 +468,53 @@ pub fn merge_discovered_launcher_accounts(accounts: &[LauncherAccount]) -> Resul
     }
 
     Ok(added)
+}
+
+pub fn remove_microsoft_oauth_launcher_account(local_id: &str) -> Result<LauncherAccount, String> {
+    let local_id = local_id.trim();
+    if local_id.is_empty() {
+        return Err("削除する Microsoft アカウントを指定してください。".to_string());
+    }
+
+    let path = discovered_launcher_accounts_path()?;
+    let mut discovered_accounts = read_discovered_launcher_accounts()?;
+    let Some(index) = discovered_accounts.iter().position(|account| {
+        account.local_id.as_deref() == Some(local_id)
+            && account.auth_source.as_deref() == Some("microsoft-oauth")
+    }) else {
+        return Err("Microsoft 経由でログインしたアカウントが見つかりませんでした。".to_string());
+    };
+
+    let removed = discovered_accounts.remove(index);
+    write_discovered_launcher_accounts(&path, &discovered_accounts)?;
+
+    let target_path = primary_launcher_accounts_path()?;
+    if target_path.exists() {
+        let mut parsed = parse_launcher_accounts_file(&target_path)?;
+        let mut changed = false;
+
+        if let Some(root_object) = parsed.root.as_object_mut() {
+            if let Some(accounts) = root_object.get_mut("accounts").and_then(Value::as_object_mut) {
+                changed |= accounts.remove(local_id).is_some();
+            }
+
+            let active_is_removed = root_object
+                .get("activeAccountLocalId")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                == Some(local_id);
+            if active_is_removed {
+                root_object.insert("activeAccountLocalId".to_string(), Value::String(String::new()));
+                changed = true;
+            }
+        }
+
+        if changed {
+            write_launcher_json_file(&parsed.path, &parsed.root)?;
+        }
+    }
+
+    Ok(removed)
 }
 
 pub fn set_active_launcher_account(local_id: &str) -> Result<String, String> {
@@ -1019,6 +1070,12 @@ fn parse_launcher_account_entry(
                     .map(str::to_string)
             }),
         user_properties,
+        auth_source: account
+            .get("authSource")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
         xbox_profile_verified: account
             .get("xboxProfileVerified")
             .and_then(Value::as_bool)
@@ -1074,6 +1131,14 @@ fn build_launcher_account_record(account: &LauncherAccount) -> Map<String, Value
         .filter(|value| !value.is_empty())
     {
         raw.insert("remoteId".to_string(), Value::String(xuid.to_string()));
+    }
+    if let Some(auth_source) = account
+        .auth_source
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        raw.insert("authSource".to_string(), Value::String(auth_source.to_string()));
     }
 
     let mut profile = Map::new();
@@ -1178,6 +1243,7 @@ pub(crate) fn merge_launcher_account_fields(
     merge_launcher_account_option(&mut target.xuid, &source.xuid);
     merge_launcher_account_option(&mut target.local_id, &source.local_id);
     merge_launcher_account_option(&mut target.user_properties, &source.user_properties);
+    merge_launcher_account_option(&mut target.auth_source, &source.auth_source);
     target.xbox_profile_verified |= source.xbox_profile_verified;
 }
 
@@ -1997,6 +2063,11 @@ pub fn set_java_page_as_last_visited() -> Result<(), String> {
 }
 
 pub fn open_official_launcher() -> Result<String, String> {
+    let settings = crate::settings::load_settings();
+    if settings.official_launcher_auto_install && !launcher_available() {
+        ensure_official_launcher_available(false)?;
+    }
+
     if cfg!(target_os = "windows") {
         for path in legacy_launcher_candidates() {
             if path.exists() {
@@ -2031,7 +2102,8 @@ pub fn open_official_launcher() -> Result<String, String> {
 
 pub fn launcher_available() -> bool {
     if cfg!(target_os = "windows") {
-        return true;
+        return legacy_launcher_candidates().iter().any(|path| path.exists())
+            || windows_store_launcher_package_installed();
     }
 
     if cfg!(target_os = "macos") {
@@ -2049,6 +2121,187 @@ pub fn launcher_available() -> bool {
         .output()
         .map(|output| output.status.success())
         .unwrap_or(false)
+}
+
+pub fn official_launcher_installer_path() -> PathBuf {
+    crate::settings::temp_root_dir()
+        .join("official-launcher")
+        .join("MinecraftLauncher.winget")
+}
+
+pub fn ensure_official_launcher_available_with_progress(
+    app: &tauri::AppHandle,
+    operation_id: Option<String>,
+    reinstall: bool,
+) -> Result<ActionResult, String> {
+    let operation_id = operation_id
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| format!("official-launcher-{}", chrono::Local::now().timestamp_millis()));
+
+    crate::progress::emit_progress(
+        app,
+        &operation_id,
+        "公式 Launcher を準備中",
+        if reinstall {
+            "公式 Minecraft Launcher を再インストールします。"
+        } else {
+            "公式 Minecraft Launcher の導入状態を確認しています。"
+        },
+        10.0,
+    );
+
+    let result = ensure_official_launcher_available(reinstall);
+
+    match &result {
+        Ok(_) => crate::progress::emit_progress(
+            app,
+            &operation_id,
+            "公式 Launcher を準備中",
+            "公式 Minecraft Launcher の準備が完了しました。",
+            100.0,
+        ),
+        Err(error) => crate::progress::emit_progress(
+            app,
+            &operation_id,
+            "公式 Launcher を準備中",
+            format!("公式 Minecraft Launcher の準備に失敗しました: {error}"),
+            100.0,
+        ),
+    }
+
+    result
+}
+
+pub fn ensure_official_launcher_available(reinstall: bool) -> Result<ActionResult, String> {
+    if !cfg!(target_os = "windows") {
+        return Err(
+            "公式 Minecraft Launcher の自動導入は現在 Windows のみ対応です。macOS / Linux では公式サイトまたは各ストアから導入してください。"
+                .to_string(),
+        );
+    }
+
+    if launcher_available() && !reinstall {
+        return Ok(ActionResult {
+            message: "公式 Minecraft Launcher は既に利用可能です。".to_string(),
+            file_name: official_launcher_installer_path().to_string_lossy().to_string(),
+        });
+    }
+
+    if let Some(parent) = official_launcher_installer_path().parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("{} を準備できませんでした: {error}", parent.display()))?;
+    }
+
+    crate::app_log::append_log(
+        "INFO",
+        if reinstall {
+            "installing official Minecraft Launcher via winget with reinstall requested"
+        } else {
+            "installing official Minecraft Launcher via winget"
+        },
+    );
+
+    let winget_result = run_winget_minecraft_launcher_install(reinstall);
+    match winget_result {
+        Ok(message) => Ok(ActionResult {
+            message,
+            file_name: official_launcher_installer_path().to_string_lossy().to_string(),
+        }),
+        Err(error) => {
+            crate::app_log::append_log(
+                "WARN",
+                format!("winget Minecraft Launcher install failed: {error}"),
+            );
+            open_minecraft_launcher_store_page()?;
+            Ok(ActionResult {
+                message: format!(
+                    "winget で公式 Minecraft Launcher を導入できなかったため、Microsoft Store の公式ページを開きました。表示された画面からインストールしてください。詳細: {error}"
+                ),
+                file_name: WINDOWS_STORE_PRODUCT_URI.to_string(),
+            })
+        }
+    }
+}
+
+fn run_winget_minecraft_launcher_install(reinstall: bool) -> Result<String, String> {
+    let mut command = std::process::Command::new("winget");
+    if reinstall {
+        command.args([
+            "install",
+            "--id",
+            WINGET_MINECRAFT_LAUNCHER_ID,
+            "-e",
+            "--source",
+            "msstore",
+            "--accept-package-agreements",
+            "--accept-source-agreements",
+            "--force",
+        ]);
+    } else {
+        command.args([
+            "install",
+            "--id",
+            WINGET_MINECRAFT_LAUNCHER_ID,
+            "-e",
+            "--source",
+            "msstore",
+            "--accept-package-agreements",
+            "--accept-source-agreements",
+        ]);
+    }
+
+    suppress_console_window(&mut command);
+    let output = command
+        .output()
+        .map_err(|error| format!("winget を実行できませんでした: {error}"))?;
+
+    if output.status.success() {
+        return Ok(if reinstall {
+            "公式 Minecraft Launcher の再インストールを開始しました。".to_string()
+        } else {
+            "公式 Minecraft Launcher のインストールを開始しました。".to_string()
+        });
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Err(format!("winget が失敗しました: {}{}", stdout, stderr))
+}
+
+fn open_minecraft_launcher_store_page() -> Result<(), String> {
+    if cfg!(target_os = "windows") {
+        std::process::Command::new("explorer.exe")
+            .arg(WINDOWS_STORE_PRODUCT_URI)
+            .spawn()
+            .map_err(|error| format!("Microsoft Store を開けませんでした: {error}"))?;
+        return Ok(());
+    }
+    Err("Microsoft Store ページを開けるのは Windows のみです。".to_string())
+}
+
+fn windows_store_launcher_package_installed() -> bool {
+    if !cfg!(target_os = "windows") {
+        return false;
+    }
+
+    let mut command = std::process::Command::new("powershell.exe");
+    command.args([
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "if (Get-AppxPackage -Name 'Microsoft.4297127D64EC6' -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }",
+    ]);
+    suppress_console_window(&mut command);
+    command.output().map(|output| output.status.success()).unwrap_or(false)
+}
+
+fn suppress_console_window(command: &mut std::process::Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
 }
 
 pub fn upsert_custom_profile(draft: CustomProfileDraft) -> Result<String, String> {
@@ -3395,6 +3648,7 @@ mod tests {
             xuid: None,
             local_id: Some("local-id".to_string()),
             user_properties: None,
+            auth_source: None,
             xbox_profile_verified: false,
         }
     }

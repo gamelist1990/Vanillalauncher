@@ -60,6 +60,27 @@ type ModRemoteStateCacheEntry = {
 
 const MOD_UPDATE_CACHE_WINDOW_MS = 5 * 60 * 1000;
 const PROGRESS_HISTORY_LIMIT = 18;
+const DISCOVER_PAGE_SIZE = 18;
+
+function mergeDiscoverResults(
+  current: ModrinthProject[],
+  incoming: ModrinthProject[],
+) {
+  const seen = new Set(current.map((project) => `${project.source}:${project.projectId}`));
+  const merged = [...current];
+
+  for (const project of incoming) {
+    const key = `${project.source}:${project.projectId}`;
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    merged.push(project);
+  }
+
+  return merged;
+}
 
 function shouldAppendProgressHistoryEntry(
   snapshot: ProgressSnapshot | undefined,
@@ -146,6 +167,7 @@ function App() {
   const [selectedProfileId, setSelectedProfileId] = useState("");
   const [activeView, setActiveView] = useState<ViewMode>("play");
   const [notices, setNotices] = useState<Notice[]>([]);
+  const [accountNotices, setAccountNotices] = useState<Notice[]>([]);
   const [progressItems, setProgressItems] = useState<ProgressState[]>([]);
   const [progressSnapshots, setProgressSnapshots] = useState<Record<string, ProgressSnapshot>>({});
   const [busyAction, setBusyAction] = useState<string | null>(null);
@@ -183,6 +205,8 @@ function App() {
   const [discoverMode, setDiscoverMode] = useState<"mods" | "modpacks">("mods");
   const [searchResults, setSearchResults] = useState<ModrinthProject[]>([]);
   const [searching, setSearching] = useState(false);
+  const [loadingMoreSearchResults, setLoadingMoreSearchResults] = useState(false);
+  const [hasMoreSearchResults, setHasMoreSearchResults] = useState(false);
   const [modVisualStateMap, setModVisualStateMap] = useState<Record<string, ModRemoteState>>({});
   const [modRemoteStateMap, setModRemoteStateMap] = useState<Record<string, ModRemoteState>>({});
   const [loadingModRemoteStates, setLoadingModRemoteStates] = useState(false);
@@ -234,8 +258,14 @@ function App() {
   const accountScanOperationId = busyAction?.startsWith("account-scan:")
     ? busyAction.slice("account-scan:".length)
     : null;
+  const accountLoginOperationId = busyAction?.startsWith("xbox-login:")
+    ? busyAction.slice("xbox-login:".length)
+    : null;
   const accountScanProgress = accountScanOperationId
     ? progressItems.find((item) => item.operationId === accountScanOperationId) ?? null
+    : null;
+  const accountLoginProgress = accountLoginOperationId
+    ? progressItems.find((item) => item.operationId === accountLoginOperationId) ?? null
     : null;
   const selectedProgressSnapshot = progressDetailDialog
     ? progressSnapshots[progressDetailDialog.operationId] ?? null
@@ -279,8 +309,29 @@ function App() {
     });
   }
 
+  function pushAccountNotice(tone: Notice["tone"], text: string) {
+    setAccountNotices((current) => {
+      if (current.some((notice) => notice.tone === tone && notice.text === text)) {
+        return current;
+      }
+
+      return [
+        ...current.slice(-3),
+        {
+          id: createNoticeId(),
+          tone,
+          text,
+        },
+      ];
+    });
+  }
+
   const dismissNotice = useCallback((noticeId: string) => {
     setNotices((current) => current.filter((notice) => notice.id !== noticeId));
+  }, []);
+
+  const dismissAccountNotice = useCallback((noticeId: string) => {
+    setAccountNotices((current) => current.filter((notice) => notice.id !== noticeId));
   }, []);
 
   function upsertProgress(progress: ProgressState) {
@@ -873,13 +924,18 @@ function App() {
     try {
       const results =
         discoverMode === "modpacks"
-          ? await launcherApi.searchModpacks(normalizedQuery)
+          ? await launcherApi.searchModpacks(normalizedQuery, undefined, DISCOVER_PAGE_SIZE, 0)
           : await launcherApi.searchMods(
               normalizedQuery,
               selectedProfile?.loader,
               selectedProfile?.gameVersion,
+              DISCOVER_PAGE_SIZE,
+              0,
             );
       setSearchResults(results);
+      setHasMoreSearchResults(
+        results.filter((project) => project.source === "modrinth").length >= DISCOVER_PAGE_SIZE,
+      );
       setActiveView("discover");
 
       if (results.length === 0) {
@@ -906,6 +962,55 @@ function App() {
       );
     } finally {
       setSearching(false);
+    }
+  }
+
+  async function handleLoadMoreSearchResults() {
+    const normalizedQuery = normalizeDiscoverQuery(searchQuery);
+    if (discoverMode === "mods" && !selectedProfile) {
+      return;
+    }
+
+    if (searching || loadingMoreSearchResults || !hasMoreSearchResults) {
+      return;
+    }
+
+    const offset = searchResults.filter((project) => project.source === "modrinth").length;
+    setLoadingMoreSearchResults(true);
+
+    try {
+      const results =
+        discoverMode === "modpacks"
+          ? await launcherApi.searchModpacks(
+              normalizedQuery,
+              undefined,
+              DISCOVER_PAGE_SIZE,
+              offset,
+            )
+          : await launcherApi.searchMods(
+              normalizedQuery,
+              selectedProfile?.loader,
+              selectedProfile?.gameVersion,
+              DISCOVER_PAGE_SIZE,
+              offset,
+            );
+
+      setSearchResults((current) => mergeDiscoverResults(current, results));
+      setHasMoreSearchResults(
+        results.filter((project) => project.source === "modrinth").length >= DISCOVER_PAGE_SIZE,
+      );
+    } catch (error) {
+      pushNotice(
+        "error",
+        errorMessage(
+          error,
+          discoverMode === "modpacks"
+            ? "Modpack の追加読み込みに失敗しました。"
+            : "Mod の追加読み込みに失敗しました。",
+        ),
+      );
+    } finally {
+      setLoadingMoreSearchResults(false);
     }
   }
 
@@ -1233,12 +1338,24 @@ function App() {
     setBusyAction("launch");
 
     try {
-      await ensureXboxAuthStateBeforeLaunch();
+      if (!appSettings?.offlineModeEnabled) {
+        await ensureXboxAuthStateBeforeLaunch();
+      }
       const result = await launcherApi.launchProfileDirectly(selectedProfile.id);
       pushNotice("success", result.message);
       await refreshLauncher(selectedProfile.id);
     } catch (error) {
-      pushNotice("error", errorMessage(error, "Minecraft Java を直接起動できませんでした。"));
+      const message = errorMessage(error, "Minecraft Java を直接起動できませんでした。");
+      pushNotice("error", message);
+      if (message.includes("オンラインモード") || message.includes("所有権")) {
+        setConfirmDialog({
+          title: "Minecraft Java を起動できません",
+          description: message,
+          confirmLabel: "閉じる",
+          tone: "accent",
+          onConfirm: () => undefined,
+        });
+      }
     } finally {
       setBusyAction(null);
     }
@@ -1255,15 +1372,24 @@ function App() {
     setBusyAction("launch");
 
     try {
-      await ensureXboxAuthStateBeforeLaunch();
+      if (!appSettings?.offlineModeEnabled) {
+        await ensureXboxAuthStateBeforeLaunch();
+      }
       const result = await launcherApi.launchProfileDirectly(profileId);
       pushNotice("success", result.message);
       await refreshLauncher(profileId);
     } catch (error) {
-      pushNotice(
-        "error",
-        errorMessage(error, `${profileName} を直接起動できませんでした。`),
-      );
+      const message = errorMessage(error, `${profileName} を直接起動できませんでした。`);
+      pushNotice("error", message);
+      if (message.includes("オンラインモード") || message.includes("所有権")) {
+        setConfirmDialog({
+          title: "Minecraft Java を起動できません",
+          description: message,
+          confirmLabel: "閉じる",
+          tone: "accent",
+          onConfirm: () => undefined,
+        });
+      }
     } finally {
       setBusyAction(null);
     }
@@ -1343,30 +1469,38 @@ function App() {
     upsertProgress({
       operationId,
       title: "Xboxログイン / Java所有確認",
-      detail: "Xbox 認証情報から Minecraft Java の所有状況を確認しています。",
+      detail: "Microsoft ログイン用の専用ウィンドウを準備しています。",
       percent: 2,
     });
+    pushAccountNotice("info", "Microsoft ログインを開始します。ブラウザーでサインインを完了してください。");
 
     try {
-      const result = await launcherApi.ensureXboxRpsState(operationId);
-      if (result.succeeded) {
-        pushNotice(
-          "success",
-          `${result.message} Minecraft Java の所有を確認できました。`,
-        );
-      } else {
-        pushNotice(
-          "info",
-          `${result.message} 確認できない場合は、Xbox/Microsoft アカウントで公式 Launcher に一度ログインしてから再実行してください。`,
-        );
-      }
-
-      await launcherApi.scanLauncherAccounts(operationId);
+      const signInResult = await launcherApi.startXboxSignIn(operationId);
+      pushNotice(signInResult.openedXboxSignIn ? "success" : "info", signInResult.message);
+      pushAccountNotice(signInResult.succeeded ? "success" : "info", signInResult.message);
       await refreshLauncher();
     } catch (error) {
-      pushNotice("error", errorMessage(error, "Xboxログイン / Java所有確認に失敗しました。"));
+      const message = errorMessage(error, "Xboxログイン / Java所有確認に失敗しました。");
+      pushNotice("error", message);
+      pushAccountNotice("error", message);
     } finally {
       scheduleProgressClear(operationId);
+      setBusyAction(null);
+    }
+  }
+
+  async function handleLogoutMicrosoftAccount(localId: string) {
+    setBusyAction(`account-logout:${localId}`);
+    try {
+      const result = await launcherApi.logoutMicrosoftLauncherAccount(localId);
+      pushNotice("success", result.message);
+      pushAccountNotice("success", result.message);
+      await refreshLauncher();
+    } catch (error) {
+      const message = errorMessage(error, "Microsoft アカウントからログアウトできませんでした。");
+      pushNotice("error", message);
+      pushAccountNotice("error", message);
+    } finally {
       setBusyAction(null);
     }
   }
@@ -1427,6 +1561,9 @@ function App() {
         enabled,
         appSettings?.performanceLiteMode ?? "auto",
         appSettings?.customJavaPath ?? null,
+        appSettings?.offlineModeEnabled ?? false,
+        appSettings?.offlineUsername ?? null,
+        appSettings?.officialLauncherAutoInstall ?? false,
       );
       pushNotice("success", result.message);
       await refreshSettingsState();
@@ -1435,17 +1572,37 @@ function App() {
     }
   }
 
-  async function handleChangePerformanceLiteMode(mode: AppSettings["performanceLiteMode"]) {
+  async function handleToggleOfflineMode(enabled: boolean) {
     try {
       const result = await launcherApi.updateAppSettings(
         appSettings?.tempCacheEnabled ?? true,
-        mode,
+        appSettings?.performanceLiteMode ?? "auto",
         appSettings?.customJavaPath ?? null,
+        enabled,
+        appSettings?.offlineUsername ?? snapshot?.activeAccount?.username ?? null,
+        appSettings?.officialLauncherAutoInstall ?? false,
       );
       pushNotice("success", result.message);
       await refreshSettingsState();
     } catch (error) {
-      pushNotice("error", errorMessage(error, "軽量モード設定を更新できませんでした。"));
+      pushNotice("error", errorMessage(error, "オフライン起動設定を更新できませんでした。"));
+    }
+  }
+
+  async function handleChangeOfflineUsername(username: string) {
+    try {
+      const result = await launcherApi.updateAppSettings(
+        appSettings?.tempCacheEnabled ?? true,
+        appSettings?.performanceLiteMode ?? "auto",
+        appSettings?.customJavaPath ?? null,
+        appSettings?.offlineModeEnabled ?? false,
+        username,
+        appSettings?.officialLauncherAutoInstall ?? false,
+      );
+      pushNotice("success", result.message);
+      await refreshSettingsState();
+    } catch (error) {
+      pushNotice("error", errorMessage(error, "オフラインユーザー名を保存できませんでした。"));
     }
   }
 
@@ -1458,6 +1615,39 @@ function App() {
       await refreshSettingsState();
     } catch (error) {
       pushNotice("error", errorMessage(error, "Java の確認または導入に失敗しました。"));
+    } finally {
+      scheduleProgressClear(operationId);
+      setBusyAction(null);
+    }
+  }
+
+  async function handleToggleOfficialLauncherAutoInstall(enabled: boolean) {
+    try {
+      const result = await launcherApi.updateAppSettings(
+        appSettings?.tempCacheEnabled ?? true,
+        appSettings?.performanceLiteMode ?? "auto",
+        appSettings?.customJavaPath ?? null,
+        appSettings?.offlineModeEnabled ?? false,
+        appSettings?.offlineUsername ?? null,
+        enabled,
+      );
+      pushNotice("success", result.message);
+      await refreshSettingsState();
+    } catch (error) {
+      pushNotice("error", errorMessage(error, "公式 Launcher 自動導入設定を更新できませんでした。"));
+    }
+  }
+
+  async function handleEnsureOfficialLauncher(reinstall = false) {
+    const operationId = createOperationId("official-launcher");
+    setBusyAction("official-launcher");
+    try {
+      const result = await launcherApi.ensureOfficialLauncherAvailable(operationId, reinstall);
+      pushNotice("success", result.message);
+      await refreshSettingsState();
+      await refreshLauncher();
+    } catch (error) {
+      pushNotice("error", errorMessage(error, "公式 Minecraft Launcher の確認または導入に失敗しました。"));
     } finally {
       scheduleProgressClear(operationId);
       setBusyAction(null);
@@ -1478,6 +1668,9 @@ function App() {
         appSettings?.tempCacheEnabled ?? true,
         appSettings?.performanceLiteMode ?? "auto",
         selected,
+        appSettings?.offlineModeEnabled ?? false,
+        appSettings?.offlineUsername ?? null,
+        appSettings?.officialLauncherAutoInstall ?? false,
       );
       pushNotice("success", result.message);
       await refreshSettingsState();
@@ -1492,6 +1685,9 @@ function App() {
         appSettings?.tempCacheEnabled ?? true,
         appSettings?.performanceLiteMode ?? "auto",
         null,
+        appSettings?.offlineModeEnabled ?? false,
+        appSettings?.offlineUsername ?? null,
+        appSettings?.officialLauncherAutoInstall ?? false,
       );
       pushNotice("success", result.message);
       await refreshSettingsState();
@@ -1885,7 +2081,6 @@ function App() {
           profiles={snapshot?.profiles ?? []}
           selectedProfileId={selectedProfile?.id ?? ""}
           sidebarOpen={sidebarOpen}
-          onRefresh={() => void refreshLauncher()}
           onSelectProfile={setSelectedProfileId}
           onToggleSidebar={() => setSidebarOpen((current) => !current)}
         />
@@ -1964,7 +2159,10 @@ function App() {
         <HeroPanel
           profile={selectedProfile}
           activeAccount={snapshot?.activeAccount ?? null}
+          offlineModeEnabled={appSettings?.offlineModeEnabled ?? false}
+          offlineUsername={appSettings?.offlineUsername ?? snapshot?.activeAccount?.username ?? "Player"}
           launcherAccounts={snapshot?.launcherAccounts ?? []}
+          accountNotices={accountNotices}
           launcherAvailable={snapshot?.launcherAvailable ?? false}
           busy={launchBusy || busyAction === "delete-profile"}
           openingLauncher={busyAction === "launcher"}
@@ -1972,11 +2170,16 @@ function App() {
           scanningAccounts={busyAction?.startsWith("account-scan:") ?? false}
           xboxLoggingIn={busyAction?.startsWith("xbox-login:") ?? false}
           scanProgress={accountScanProgress}
+          loginProgress={accountLoginProgress}
           onLaunch={() => void handleLaunchProfile()}
           onOpenOfficialLauncher={() => void handleOpenOfficialLauncher()}
+          onDismissAccountNotice={dismissAccountNotice}
           onSelectLauncherAccount={(localId) => handleSelectLauncherAccount(localId)}
+          onLogoutMicrosoftAccount={(localId) => void handleLogoutMicrosoftAccount(localId)}
           onScanLauncherAccounts={() => void handleScanLauncherAccounts()}
           onXboxLogin={() => void handleXboxLoginAndJavaCheck()}
+          onToggleOfflineMode={(enabled) => void handleToggleOfflineMode(enabled)}
+          onChangeOfflineUsername={(username) => void handleChangeOfflineUsername(username)}
           onOpenGameDir={() => void openSelectedPath("game")}
           onOpenModsDir={() => void openSelectedPath("mods")}
           onEditProfileName={handleOpenProfileNameDialog}
@@ -1994,6 +2197,8 @@ function App() {
           searching={searching}
           performanceLite={performanceLite}
           searchResults={searchResults}
+          hasMoreSearchResults={hasMoreSearchResults}
+          loadingMoreSearchResults={loadingMoreSearchResults}
           modRemoteStateMap={mergedModStateMap}
           loadingModRemoteStates={loadingModRemoteStates}
           modRemoteFetchDone={modRemoteFetchDone}
@@ -2029,6 +2234,7 @@ function App() {
           onChangeDiscoverMode={setDiscoverMode}
           onChangeSearchQuery={setSearchQuery}
           onSearch={() => void handleSearch()}
+          onLoadMoreSearchResults={() => void handleLoadMoreSearchResults()}
           onProjectAction={(project) => void handleProjectAction(project)}
           onOpenProject={(url) => void handleOpenGuide(url)}
           onSelectLoader={(loader) => {
@@ -2049,7 +2255,10 @@ function App() {
           onOpenGuide={(url) => void handleOpenGuide(url)}
           onLaunchOfficial={() => void handleOpenOfficialLauncher()}
           onToggleTempCache={(enabled) => void handleToggleTempCache(enabled)}
-          onChangePerformanceLiteMode={(mode) => void handleChangePerformanceLiteMode(mode)}
+          onToggleOfflineMode={(enabled) => void handleToggleOfflineMode(enabled)}
+          onChangeOfflineUsername={(username) => void handleChangeOfflineUsername(username)}
+          onToggleOfficialLauncherAutoInstall={(enabled) => void handleToggleOfficialLauncherAutoInstall(enabled)}
+          onEnsureOfficialLauncher={(reinstall) => void handleEnsureOfficialLauncher(reinstall)}
           onEnsureJavaRuntime={() => void handleEnsureJavaRuntime()}
           onSelectCustomJavaPath={() => void handleSelectCustomJavaPath()}
           onClearCustomJavaPath={() => void handleClearCustomJavaPath()}

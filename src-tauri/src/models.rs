@@ -26,11 +26,13 @@ pub struct LauncherAccountEntry {
     pub local_id: String,
     pub username: String,
     pub gamer_tag: Option<String>,
+    pub xuid: Option<String>,
     pub microsoft_username: Option<String>,
     pub auth_source: String,
     pub has_java_access: bool,
     pub is_active: bool,
     pub is_selectable: bool,
+    pub can_logout: bool,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -193,6 +195,16 @@ pub struct XboxRpsStateResult {
     pub total_attempts: usize,
     pub source_path: Option<String>,
     pub variant_label: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct XboxSignInResult {
+    pub message: String,
+    pub opened_xbox_sign_in: bool,
+    pub refreshed: bool,
+    pub succeeded: bool,
+    pub account_count: usize,
 }
 
 #[derive(Debug, Serialize, Clone)]

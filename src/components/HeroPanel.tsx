@@ -4,6 +4,7 @@ import type {
   ActiveLauncherAccount,
   LauncherAccountEntry,
   LauncherProfile,
+  Notice,
   ProgressState,
 } from "../app/types";
 import { LauncherAccountModal } from "./LauncherAccountModal";
@@ -11,7 +12,10 @@ import { LauncherAccountModal } from "./LauncherAccountModal";
 type HeroPanelProps = {
   profile: LauncherProfile | null;
   activeAccount?: ActiveLauncherAccount | null;
+  offlineModeEnabled: boolean;
+  offlineUsername: string;
   launcherAccounts: LauncherAccountEntry[];
+  accountNotices?: Notice[];
   launcherAvailable: boolean;
   busy: boolean;
   openingLauncher: boolean;
@@ -19,11 +23,16 @@ type HeroPanelProps = {
   scanningAccounts: boolean;
   xboxLoggingIn: boolean;
   scanProgress?: ProgressState | null;
+  loginProgress?: ProgressState | null;
   onLaunch: () => void;
   onOpenOfficialLauncher: () => void;
+  onDismissAccountNotice?: (noticeId: string) => void;
   onSelectLauncherAccount: (localId: string) => Promise<boolean>;
+  onLogoutMicrosoftAccount: (localId: string) => void;
   onScanLauncherAccounts: () => void;
   onXboxLogin: () => void;
+  onToggleOfflineMode: (enabled: boolean) => void;
+  onChangeOfflineUsername: (username: string) => void;
   onOpenGameDir: () => void;
   onOpenModsDir: () => void;
   onEditProfileName: () => void;
@@ -33,7 +42,10 @@ type HeroPanelProps = {
 export function HeroPanel({
   profile,
   activeAccount,
+  offlineModeEnabled,
+  offlineUsername,
   launcherAccounts,
+  accountNotices = [],
   launcherAvailable,
   busy,
   openingLauncher,
@@ -41,11 +53,16 @@ export function HeroPanel({
   scanningAccounts,
   xboxLoggingIn,
   scanProgress,
+  loginProgress,
   onLaunch,
   onOpenOfficialLauncher,
+  onDismissAccountNotice,
   onSelectLauncherAccount,
+  onLogoutMicrosoftAccount,
   onScanLauncherAccounts,
   onXboxLogin,
+  onToggleOfflineMode,
+  onChangeOfflineUsername,
   onOpenGameDir,
   onOpenModsDir,
   onEditProfileName,
@@ -53,17 +70,29 @@ export function HeroPanel({
 }: HeroPanelProps) {
   const [accountPanelOpen, setAccountPanelOpen] = useState(false);
   const backgroundImage = encodeURI(profile?.backgroundImageUrl ?? "/launcher-hero.jpg");
-  const accountSummary = activeAccount?.username
-    ? activeAccount.username
+  const resolvedActiveAccount = activeAccount
+    ? launcherAccounts.find((account) => account.localId === activeAccount.localId) ??
+      launcherAccounts.find((account) => account.isActive) ??
+      activeAccount
+    : launcherAccounts.find((account) => account.isActive) ?? null;
+  const resolvedHasJavaAccess = Boolean(resolvedActiveAccount?.hasJavaAccess);
+  const accountSummary = offlineModeEnabled
+    ? offlineUsername || "Player"
+    : resolvedActiveAccount?.username
+    ? resolvedActiveAccount.username
     : "アカウント未検出";
-  const accountStatus = activeAccount?.hasJavaAccess
+  const accountStatus = offlineModeEnabled
+    ? "オフラインモードで起動します。Xbox / Microsoft 認証は使用しません。"
+    : resolvedHasJavaAccess
     ? "Minecraft Java ライセンス確認済み"
-    : activeAccount
+    : resolvedActiveAccount
       ? "Java 版ライセンス未確認"
       : "アカウントデータ未検出";
-  const accountTone = activeAccount?.hasJavaAccess
+  const accountTone = offlineModeEnabled
+    ? "オフライン"
+    : resolvedHasJavaAccess
     ? "Java 利用可"
-    : activeAccount
+    : resolvedActiveAccount
       ? "Java 未確認"
       : "未検出";
 
@@ -158,7 +187,7 @@ export function HeroPanel({
                   <strong className="hero-account-title">
                     <span>{accountSummary}</span>
                   </strong>
-                  <span className={`hero-account-pill ${activeAccount?.hasJavaAccess ? "is-owned" : activeAccount ? "is-neutral" : ""}`}>
+                  <span className={`hero-account-pill ${offlineModeEnabled || resolvedHasJavaAccess ? "is-owned" : resolvedActiveAccount ? "is-neutral" : ""}`}>
                     {accountTone}
                   </span>
                 </span>
@@ -172,15 +201,23 @@ export function HeroPanel({
       <LauncherAccountModal
         open={accountPanelOpen}
         accounts={launcherAccounts}
+        accountNotices={accountNotices}
+        offlineModeEnabled={offlineModeEnabled}
+        offlineUsername={offlineUsername}
         switchingLocalId={switchingAccountLocalId}
         scanning={scanningAccounts}
         xboxLoggingIn={xboxLoggingIn}
         scanProgress={scanProgress}
+        loginProgress={loginProgress}
         interactionDisabled={busy || openingLauncher}
         onClose={() => setAccountPanelOpen(false)}
+        onDismissAccountNotice={onDismissAccountNotice}
         onSelectAccount={(localId) => void handleSelectAccount(localId)}
+        onLogoutMicrosoftAccount={onLogoutMicrosoftAccount}
         onScanAccounts={onScanLauncherAccounts}
         onXboxLogin={onXboxLogin}
+        onToggleOfflineMode={onToggleOfflineMode}
+        onChangeOfflineUsername={onChangeOfflineUsername}
         onOpenOfficialLauncher={onOpenOfficialLauncher}
       />
     </>

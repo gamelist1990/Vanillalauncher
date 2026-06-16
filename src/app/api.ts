@@ -20,20 +20,31 @@ import type {
   ModrinthProject,
   SoftwareStatus,
   XboxRpsStateResult,
+  XboxSignInResult,
 } from "./types";
 
 export const launcherApi = {
   getLauncherState: () => invoke<LauncherSnapshot>("get_launcher_state"),
-  searchMods: (query: string, loader?: string | null, gameVersion?: string | null) =>
+  searchMods: (
+    query: string,
+    loader?: string | null,
+    gameVersion?: string | null,
+    limit?: number,
+    offset?: number,
+  ) =>
     invoke<ModrinthProject[]>("search_modrinth_mods", {
       query,
       loader,
       gameVersion,
+      limit,
+      offset,
     }),
-  searchModpacks: (query: string, gameVersion?: string | null) =>
+  searchModpacks: (query: string, gameVersion?: string | null, limit?: number, offset?: number) =>
     invoke<ModrinthProject[]>("search_modrinth_modpacks", {
       query,
       gameVersion,
+      limit,
+      offset,
     }),
   getModpackVersions: (projectId: string) =>
     invoke<ModpackVersionSummary[]>("get_modrinth_modpack_versions", {
@@ -103,6 +114,10 @@ export const launcherApi = {
     invoke<ActionResult>("set_active_launcher_account", {
       localId,
     }),
+  logoutMicrosoftLauncherAccount: (localId: string) =>
+    invoke<ActionResult>("logout_microsoft_launcher_account", {
+      localId,
+    }),
   scanLauncherAccounts: (operationId?: string) =>
     invoke<ActionResult>("scan_launcher_accounts", { operationId }),
   uninstallProject: (profileId: string, projectId: string) =>
@@ -155,6 +170,8 @@ export const launcherApi = {
     }),
   ensureXboxRpsState: (operationId?: string) =>
     invoke<XboxRpsStateResult>("ensure_xbox_rps_state", { operationId }),
+  startXboxSignIn: (operationId?: string) =>
+    invoke<XboxSignInResult>("start_xbox_sign_in", { operationId }),
   launchProfileDirectly: (profileId: string) =>
     invoke<LaunchResult>("launch_profile_directly", { profileId }),
   launchProfileInOfficialLauncher: (profileId: string) =>
@@ -164,10 +181,22 @@ export const launcherApi = {
     tempCacheEnabled: boolean,
     performanceLiteMode: AppSettings["performanceLiteMode"],
     customJavaPath?: string | null,
+    offlineModeEnabled?: boolean,
+    offlineUsername?: string | null,
+    officialLauncherAutoInstall?: boolean,
   ) =>
-    invoke<ActionResult>("update_app_settings", { tempCacheEnabled, performanceLiteMode, customJavaPath }),
+    invoke<ActionResult>("update_app_settings", {
+      tempCacheEnabled,
+      performanceLiteMode,
+      customJavaPath,
+      offlineModeEnabled,
+      offlineUsername,
+      officialLauncherAutoInstall,
+    }),
   ensureJavaRuntimeAvailable: (operationId?: string) =>
     invoke<ActionResult>("ensure_java_runtime_available", { operationId }),
+  ensureOfficialLauncherAvailable: (operationId?: string, reinstall?: boolean) =>
+    invoke<ActionResult>("ensure_official_launcher_available", { operationId, reinstall }),
   clearTempCache: () => invoke<ActionResult>("clear_temp_cache"),
   readTempCacheJson: (key: string) => invoke<string | null>("read_temp_cache_json", { key }),
   writeTempCacheJson: (key: string, jsonText: string) =>

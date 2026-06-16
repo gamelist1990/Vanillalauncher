@@ -27,6 +27,8 @@ type AppMainContentProps = {
   discoverMode: "mods" | "modpacks";
   searchQuery: string;
   searching: boolean;
+  loadingMoreSearchResults: boolean;
+  hasMoreSearchResults: boolean;
   performanceLite: boolean;
   searchResults: ModrinthProject[];
   modRemoteStateMap: Record<string, ModRemoteState>;
@@ -61,6 +63,7 @@ type AppMainContentProps = {
   onChangeDiscoverMode: (mode: "mods" | "modpacks") => void;
   onChangeSearchQuery: (value: string) => void;
   onSearch: () => void;
+  onLoadMoreSearchResults: () => void;
   onProjectAction: (project: ModrinthProject) => void;
   onOpenProject: (url: string) => void;
   onSelectLoader: (loader: LoaderId) => void;
@@ -71,8 +74,13 @@ type AppMainContentProps = {
   onOpenGuide: (url: string) => void;
   onLaunchOfficial: () => void;
   onToggleTempCache: (enabled: boolean) => void;
-  onChangePerformanceLiteMode: (mode: AppSettings["performanceLiteMode"]) => void;
+  onToggleOfflineMode: (enabled: boolean) => void;
+  onChangeOfflineUsername: (username: string) => void;
+  onToggleOfficialLauncherAutoInstall: (enabled: boolean) => void;
+  onEnsureOfficialLauncher: (reinstall?: boolean) => void;
   onEnsureJavaRuntime: () => void;
+  onSelectCustomJavaPath: () => void;
+  onClearCustomJavaPath: () => void;
   onRefreshStatus: () => void;
   onClearTempCache: () => void;
   onExportDebugLog: () => void;
@@ -88,6 +96,8 @@ export function AppMainContent({
   discoverMode,
   searchQuery,
   searching,
+  loadingMoreSearchResults,
+  hasMoreSearchResults,
   performanceLite,
   searchResults,
   modRemoteStateMap,
@@ -122,6 +132,7 @@ export function AppMainContent({
   onChangeDiscoverMode,
   onChangeSearchQuery,
   onSearch,
+  onLoadMoreSearchResults,
   onProjectAction,
   onOpenProject,
   onSelectLoader,
@@ -132,8 +143,13 @@ export function AppMainContent({
   onOpenGuide,
   onLaunchOfficial,
   onToggleTempCache,
-  onChangePerformanceLiteMode,
+  onToggleOfflineMode,
+  onChangeOfflineUsername,
+  onToggleOfficialLauncherAutoInstall,
+  onEnsureOfficialLauncher,
   onEnsureJavaRuntime,
+  onSelectCustomJavaPath,
+  onClearCustomJavaPath,
   onRefreshStatus,
   onClearTempCache,
   onExportDebugLog,
@@ -183,12 +199,15 @@ export function AppMainContent({
           profile={selectedProfile}
           searchQuery={searchQuery}
           searching={searching}
+          loadingMore={loadingMoreSearchResults}
+          hasMore={hasMoreSearchResults}
           performanceLite={performanceLite}
           busyAction={busyAction}
           results={searchResults}
           onChangeMode={onChangeDiscoverMode}
           onChangeQuery={onChangeSearchQuery}
           onSearch={onSearch}
+          onLoadMore={onLoadMoreSearchResults}
           onProjectAction={onProjectAction}
           onOpenProject={onOpenProject}
         />
@@ -219,10 +238,15 @@ export function AppMainContent({
         <SettingsView
           settings={appSettings}
           status={softwareStatus}
-          busy={loadingSettings || busyAction === "java-runtime"}
+          busy={loadingSettings || busyAction === "java-runtime" || busyAction === "official-launcher"}
           onToggleTempCache={onToggleTempCache}
-          onChangePerformanceLiteMode={onChangePerformanceLiteMode}
+          onToggleOfflineMode={onToggleOfflineMode}
+          onChangeOfflineUsername={onChangeOfflineUsername}
+          onToggleOfficialLauncherAutoInstall={onToggleOfficialLauncherAutoInstall}
+          onEnsureOfficialLauncher={onEnsureOfficialLauncher}
           onEnsureJavaRuntime={onEnsureJavaRuntime}
+          onSelectCustomJavaPath={onSelectCustomJavaPath}
+          onClearCustomJavaPath={onClearCustomJavaPath}
           onRefreshStatus={onRefreshStatus}
           onClearTempCache={onClearTempCache}
           onExportDebugLog={onExportDebugLog}

@@ -48,7 +48,12 @@
 .discover-identity span { display: block; }
 
 /* Nav */
-.sidebar-nav { display: grid; gap: 2px; flex: 1; }
+.sidebar-nav {
+  display: grid;
+  gap: 2px;
+  flex: 0 0 auto;
+  align-content: start;
+}
 
 .nav-item,
 .profile-chip,
@@ -68,6 +73,7 @@
 }
 
 .nav-item {
+  min-height: 52px;
   padding: 10px 12px; text-align: left;
   color: var(--copy-dim); background: transparent;
   border: 1px solid transparent; border-radius: var(--radius);

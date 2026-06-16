@@ -53,11 +53,13 @@ export type LauncherAccountEntry = {
   localId: string;
   username: string;
   gamerTag?: string | null;
+  xuid?: string | null;
   microsoftUsername?: string | null;
   authSource: string;
   hasJavaAccess: boolean;
   isActive: boolean;
   isSelectable: boolean;
+  canLogout: boolean;
 };
 
 export type LauncherSummary = {
@@ -218,6 +220,14 @@ export type XboxRpsStateResult = {
   variantLabel?: string | null;
 };
 
+export type XboxSignInResult = {
+  message: string;
+  openedXboxSignIn: boolean;
+  refreshed: boolean;
+  succeeded: boolean;
+  accountCount: number;
+};
+
 export type LoaderVersionSummary = {
   id: string;
   stable: boolean;
@@ -275,6 +285,9 @@ export type AppSettings = {
   tempCacheEnabled: boolean;
   performanceLiteMode: "auto" | "on" | "off";
   customJavaPath?: string | null;
+  offlineModeEnabled?: boolean;
+  offlineUsername?: string | null;
+  officialLauncherAutoInstall?: boolean;
 };
 
 export type SoftwareStatus = {
@@ -283,6 +296,8 @@ export type SoftwareStatus = {
   settingsPath: string;
   javaRuntimeDir: string;
   customJavaPath?: string | null;
+  officialLauncherAvailable?: boolean;
+  officialLauncherInstaller?: string;
   tempCacheEnabled: boolean;
   cacheFileCount: number;
   cacheTotalBytes: number;
