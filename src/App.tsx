@@ -50,10 +50,6 @@ import {
   shouldUsePerformanceLiteMode,
 } from "./features/app-shell/utils";
 import "./App.css";
-import "./styles/hero-panel.css";
-import "./styles/modals.css";
-import "./styles/play-profile.css";
-import "./styles/scrollbars.css";
 
 type ModRemoteStateCacheEntry = {
   modSignature: string;
@@ -842,7 +838,7 @@ function App() {
           return currentValue;
         }
 
-        return catalog.recommendedLoader.id;
+        return catalog.recommendedLoader?.id ?? catalog.availableLoaderVersions[0]?.id ?? "";
       });
     } catch (error) {
       if (loaderCatalogRequestTokenRef.current !== requestToken) {
@@ -1622,11 +1618,13 @@ function App() {
       return;
     }
 
+    const currentProfileId = selectedProfile.id;
+
     let effectiveState = remoteState;
 
     if (!effectiveState?.projectUrl) {
       try {
-        const visualState = await launcherApi.getProfileModVisualState(selectedProfile.id, mod.fileName);
+        const visualState = await launcherApi.getProfileModVisualState(currentProfileId, mod.fileName);
         if (visualState) {
           effectiveState = {
             ...(effectiveState ?? {}),
@@ -1641,11 +1639,11 @@ function App() {
             },
           }));
           setModRemoteStateCacheMap((current) => {
-            const existing = current[selectedProfile.id];
+            const existing = current[currentProfileId];
 
             return {
               ...current,
-              [selectedProfile.id]: {
+              [currentProfileId]: {
                 modSignature: selectedProfileModSignature,
                 visualStates: {
                   ...(existing?.visualStates ?? {}),
@@ -1670,7 +1668,7 @@ function App() {
       mod.sourceProjectId?.startsWith("curseforge:")
     ) {
       try {
-        const path = await launcherApi.resolveProfilePath(selectedProfile.id, "mods");
+        const path = await launcherApi.resolveProfilePath(currentProfileId, "mods");
         await openPath(path);
         pushNotice("info", `${mod.displayName} が入っている mods フォルダを開きました。`);
       } catch (error) {
@@ -1763,6 +1761,7 @@ function App() {
     setProfileVisualDialog({
       profileId,
       profileName: targetProfile.name,
+      draftName: targetProfile.name,
       iconUrl: targetProfile.customIconUrl ?? "",
       backgroundImageUrl: targetProfile.backgroundImageUrl ?? "",
     });
@@ -1773,7 +1772,17 @@ function App() {
       return;
     }
 
-    const { profileId, iconUrl, backgroundImageUrl } = profileVisualDialog;
+    const { profileId, draftName, iconUrl, backgroundImageUrl } = profileVisualDialog;
+
+    // 名前変更も同時に保存
+    const nextName = draftName.trim();
+    if (nextName !== "" && nextName !== profileVisualDialog.profileName) {
+      try {
+        await launcherApi.updateProfileName(profileId, nextName);
+      } catch (error) {
+        pushNotice("error", errorMessage(error, "起動構成名を更新できませんでした。"));
+      }
+    }
 
     try {
       const result = await launcherApi.updateProfileVisuals(
@@ -1905,6 +1914,11 @@ function App() {
           onConfirmDialog={() => void handleConfirmDialog()}
           onCloseProfileVisualDialog={() => setProfileVisualDialog(null)}
           onConfirmProfileVisuals={() => void handleConfirmProfileVisuals()}
+          onChangeProfileVisualName={(value) => {
+            setProfileVisualDialog((current) =>
+              current ? { ...current, draftName: value } : current,
+            );
+          }}
           onChangeProfileVisualIconUrl={(value) => {
             setProfileVisualDialog((current) =>
               current ? { ...current, iconUrl: value } : current,

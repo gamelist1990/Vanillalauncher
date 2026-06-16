@@ -335,7 +335,9 @@ pub async fn scan_launcher_accounts(
 
     emit_scan_progress("Launcher 保存ファイルを確認しています。".to_string(), 8.0);
     let (scanned_files, merged_accounts, merged_entitlements) =
-        scan_and_merge_launcher_accounts_in_minecraft()?;
+        tauri::async_runtime::spawn_blocking(scan_and_merge_launcher_accounts_in_minecraft)
+            .await
+            .map_err(|error| format!("Launcher 保存ファイル確認ジョブの実行に失敗しました: {error}"))??;
     emit_scan_progress(
         format!(
             "Launcher 保存ファイルを確認しました。{} 件の保存ファイル、{} 件のアカウント、{} 件の所有権情報を取り込みました。",
@@ -343,7 +345,9 @@ pub async fn scan_launcher_accounts(
         ),
         24.0,
     );
-    let launcher_accounts = read_launcher_accounts()?;
+    let launcher_accounts = tauri::async_runtime::spawn_blocking(read_launcher_accounts)
+        .await
+        .map_err(|error| format!("Launcher アカウント読み込みジョブの実行に失敗しました: {error}"))??;
     emit_scan_progress("PC 内の認証キャッシュを解析しています。".to_string(), 30.0);
     let discovered_accounts =
         xbox_auth::read_cached_xbox_launcher_accounts(&launcher_accounts, app, operation_id)

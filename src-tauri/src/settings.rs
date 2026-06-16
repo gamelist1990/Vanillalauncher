@@ -61,14 +61,47 @@ pub fn temp_root_dir() -> PathBuf {
 }
 
 pub fn java_runtime_dir() -> PathBuf {
-    env::temp_dir()
-        .join("vanillalauncher")
-        .join("java-runtime")
-        .join("temurin-21")
+    temp_root_dir().join("java-runtime").join("temurin-21")
 }
 
 pub fn cache_dir() -> PathBuf {
     temp_root_dir().join("modrinth-cache")
+}
+
+pub fn loader_cache_dir() -> PathBuf {
+    temp_root_dir().join("loader-cache")
+}
+
+pub fn loader_stage_dir() -> PathBuf {
+    temp_root_dir().join("loader-stage")
+}
+
+pub fn launch_auth_cache_path() -> PathBuf {
+    temp_root_dir().join("launch-auth-cache.bin")
+}
+
+pub fn frontend_cache_dir() -> PathBuf {
+    temp_root_dir().join("frontend-cache")
+}
+
+pub fn frontend_cache_file_path(key: &str) -> Result<PathBuf, String> {
+    let normalized = key.trim();
+    if normalized.is_empty() {
+        return Err("キャッシュキーが空です。".to_string());
+    }
+
+    let safe_name = normalized
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+
+    Ok(frontend_cache_dir().join(format!("{safe_name}.json")))
 }
 
 pub fn debug_export_dir() -> PathBuf {
@@ -134,26 +167,83 @@ pub fn update_app_settings(
 }
 
 pub fn clear_temp_cache() -> Result<ActionResult, String> {
-    let cache = cache_dir();
-    if cache.exists() {
-        fs::remove_dir_all(&cache)
-            .map_err(|error| format!("{} を削除できませんでした: {error}", cache.display()))?;
+    for cache in [
+        cache_dir(),
+        frontend_cache_dir(),
+        loader_cache_dir(),
+        loader_stage_dir(),
+        java_runtime_dir(),
+    ] {
+        if cache.exists() {
+            fs::remove_dir_all(&cache)
+                .map_err(|error| format!("{} を削除できませんでした: {error}", cache.display()))?;
+        }
     }
-    ensure_dir_exists(&cache)?;
+
+    let launch_auth_cache = launch_auth_cache_path();
+    if launch_auth_cache.exists() {
+        fs::remove_file(&launch_auth_cache).map_err(|error| {
+            format!(
+                "{} を削除できませんでした: {error}",
+                launch_auth_cache.display()
+            )
+        })?;
+    }
+
+    for cache in [
+        cache_dir(),
+        frontend_cache_dir(),
+        loader_cache_dir(),
+        loader_stage_dir(),
+    ] {
+        ensure_dir_exists(&cache)?;
+    }
 
     Ok(ActionResult {
         message: "Temp キャッシュをクリアしました。".to_string(),
-        file_name: cache.to_string_lossy().to_string(),
+        file_name: temp_root_dir().to_string_lossy().to_string(),
+    })
+}
+
+pub fn read_temp_cache_json(key: String) -> Result<Option<String>, String> {
+    ensure_dir_exists(&frontend_cache_dir())?;
+    let path = frontend_cache_file_path(&key)?;
+
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    fs::read_to_string(&path)
+        .map(Some)
+        .map_err(|error| format!("{} を読み込めませんでした: {error}", path.display()))
+}
+
+pub fn write_temp_cache_json(key: String, json_text: String) -> Result<ActionResult, String> {
+    ensure_dir_exists(&frontend_cache_dir())?;
+
+    serde_json::from_str::<serde_json::Value>(&json_text)
+        .map_err(|error| format!("Temp キャッシュに保存する JSON が不正です: {error}"))?;
+
+    let path = frontend_cache_file_path(&key)?;
+    fs::write(&path, json_text)
+        .map_err(|error| format!("{} を保存できませんでした: {error}", path.display()))?;
+
+    Ok(ActionResult {
+        message: "Temp キャッシュを保存しました。".to_string(),
+        file_name: path.to_string_lossy().to_string(),
     })
 }
 
 pub fn get_software_status() -> Result<SoftwareStatus, String> {
     ensure_dir_exists(&temp_root_dir())?;
     ensure_dir_exists(&cache_dir())?;
+    ensure_dir_exists(&frontend_cache_dir())?;
+    ensure_dir_exists(&loader_cache_dir())?;
+    ensure_dir_exists(&loader_stage_dir())?;
     ensure_dir_exists(&debug_export_dir())?;
 
     let settings = load_settings();
-    let (count, bytes) = dir_size_and_count(&cache_dir())?;
+    let (count, bytes) = temp_cache_size_and_count()?;
 
     Ok(SoftwareStatus {
         temp_root: temp_root_dir().to_string_lossy().to_string(),
@@ -368,6 +458,43 @@ fn dir_size_and_count(path: &Path) -> Result<(usize, u64), String> {
             format!(
                 "{} の情報を取得できませんでした: {error}",
                 entry.path().display()
+            )
+        })?;
+        if metadata.is_dir() {
+            let (count, bytes) = dir_size_and_count(&entry.path())?;
+            file_count += count;
+            total_bytes += bytes;
+        } else if metadata.is_file() {
+            file_count += 1;
+            total_bytes += metadata.len();
+        }
+    }
+
+    Ok((file_count, total_bytes))
+}
+
+fn temp_cache_size_and_count() -> Result<(usize, u64), String> {
+    let mut file_count = 0usize;
+    let mut total_bytes = 0u64;
+
+    for cache in [
+        cache_dir(),
+        frontend_cache_dir(),
+        loader_cache_dir(),
+        loader_stage_dir(),
+        java_runtime_dir(),
+    ] {
+        let (count, bytes) = dir_size_and_count(&cache)?;
+        file_count += count;
+        total_bytes += bytes;
+    }
+
+    let launch_auth_cache = launch_auth_cache_path();
+    if launch_auth_cache.exists() {
+        let metadata = fs::metadata(&launch_auth_cache).map_err(|error| {
+            format!(
+                "{} の情報を取得できませんでした: {error}",
+                launch_auth_cache.display()
             )
         })?;
         if metadata.is_file() {

@@ -1,0 +1,201 @@
+/* =====================================================
+   Local Mod Import Modal
+   ===================================================== */
+
+/* =====================================================
+   Local Mod Import Modal
+   ===================================================== */
+
+.local-mod-import-sheet {
+  max-height: min(90vh, 760px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.local-mod-dropzone {
+  width: 100%;
+  min-height: 132px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+  background:
+    radial-gradient(circle at top left, var(--accent-soft), transparent 45%),
+    var(--surface-3);
+  color: var(--copy);
+  display: grid;
+  place-items: center;
+  gap: 6px;
+  padding: 22px;
+  cursor: pointer;
+  transition: border-color 150ms, background 150ms, transform 150ms var(--ease), box-shadow 150ms;
+}
+
+.local-mod-dropzone:not(:disabled):hover,
+.local-mod-dropzone.is-dragover {
+  border-color: var(--accent-mid);
+  background:
+    radial-gradient(circle at top left, var(--accent-soft), transparent 55%),
+    var(--surface-4);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.local-mod-dropzone:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.local-mod-dropzone strong {
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--copy);
+}
+
+.local-mod-dropzone span {
+  max-width: 620px;
+  text-align: center;
+  font-size: 0.82rem;
+  color: var(--copy-dim);
+  line-height: 1.6;
+}
+
+.local-mod-analysis-list {
+  overflow-y: auto;
+  display: grid;
+  gap: 10px;
+  padding-right: 4px;
+}
+
+.local-mod-analysis-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: var(--radius);
+  background: var(--surface-3);
+  border: 1px solid var(--line);
+}
+
+.local-mod-analysis-card.is-ok {
+  border-color: var(--accent-mid);
+  background: var(--accent-soft);
+}
+
+.local-mod-analysis-card.is-error {
+  border-color: rgba(214, 93, 93, 0.36);
+  background: rgba(214, 93, 93, 0.08);
+}
+
+.local-mod-analysis-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+/* アイコン画像 */
+.local-mod-icon {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  display: block;
+  image-rendering: auto;
+}
+
+.local-mod-analysis-head > div {
+  flex: 1 1 0;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.local-mod-analysis-head strong {
+  font-size: 0.98rem;
+  color: var(--copy);
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.local-mod-analysis-head span:not(.local-mod-action-pill) {
+  font-size: 0.78rem;
+  color: var(--copy-dim);
+}
+
+.local-mod-action-pill {
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  border: 1px solid var(--line);
+  background: var(--surface-4);
+  color: var(--copy-dim);
+}
+
+.local-mod-action-pill.is-install,
+.local-mod-action-pill.is-replace {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent-mid);
+}
+
+.local-mod-action-pill.is-reject {
+  color: var(--danger);
+  background: rgba(214, 93, 93, 0.12);
+  border-color: rgba(214, 93, 93, 0.36);
+}
+
+.local-mod-action-pill.is-skip {
+  color: var(--copy-muted);
+}
+
+.local-mod-analysis-card p {
+  margin: 0;
+  font-size: 0.84rem;
+  color: var(--copy-dim);
+  line-height: 1.6;
+}
+
+.local-mod-meta-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.local-mod-meta-grid span,
+.local-mod-deps span {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--surface-4);
+  border: 1px solid var(--line);
+  color: var(--copy-dim);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.local-mod-deps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.local-mod-deps span.is-ok {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent-mid);
+}
+
+.local-mod-deps span.is-ng {
+  color: var(--danger);
+  background: rgba(214, 93, 93, 0.12);
+  border-color: rgba(214, 93, 93, 0.36);
+}
+
+.local-mod-deps span.is-warn {
+  color: var(--warning);
+  background: rgba(227,179,65,0.12);
+  border-color: rgba(227,179,65,0.3);
+}

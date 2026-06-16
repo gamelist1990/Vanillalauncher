@@ -169,6 +169,9 @@ export const launcherApi = {
   ensureJavaRuntimeAvailable: (operationId?: string) =>
     invoke<ActionResult>("ensure_java_runtime_available", { operationId }),
   clearTempCache: () => invoke<ActionResult>("clear_temp_cache"),
+  readTempCacheJson: (key: string) => invoke<string | null>("read_temp_cache_json", { key }),
+  writeTempCacheJson: (key: string, jsonText: string) =>
+    invoke<ActionResult>("write_temp_cache_json", { key, jsonText }),
   getSoftwareStatus: () => invoke<SoftwareStatus>("get_software_status"),
   exportDebugLog: () => invoke<DebugExportResult>("export_debug_log"),
 };

@@ -1,0 +1,195 @@
+/* =====================================================
+   Project Detail Modal
+   ===================================================== */
+
+/* =====================================================
+   Project Detail Modal
+   ===================================================== */
+
+.project-detail-sheet {
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+  max-height: min(90vh, 680px);
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---- Close button ---- */
+.project-detail-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 10;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-1);
+  color: var(--copy-dim);
+  font-size: 0.85rem;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background 150ms, color 150ms, transform 150ms;
+  box-shadow: var(--shadow-sm);
+}
+.project-detail-close:hover {
+  background: var(--surface-3);
+  color: var(--copy);
+  transform: scale(1.08);
+}
+
+/* ---- Hero image ---- */
+.project-detail-hero {
+  position: relative;
+  width: 100%;
+  height: 160px;
+  flex-shrink: 0;
+  overflow: hidden;
+  background: var(--surface-3);
+}
+.project-detail-hero-empty {
+  background: linear-gradient(135deg, var(--surface-3) 0%, var(--surface-4) 100%);
+}
+.project-detail-hero-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.project-detail-hero-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    transparent 40%,
+    var(--surface-2) 100%
+  );
+  pointer-events: none;
+}
+
+/* ---- Scrollable body ---- */
+.project-detail-sheet > *:not(.project-detail-hero) {
+  padding-left: 24px;
+  padding-right: 24px;
+}
+
+/* ---- Header (icon + title) ---- */
+.project-detail-header {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  margin-top: -32px;
+  padding-top: 0;
+  padding-bottom: 16px;
+  position: relative;
+  z-index: 2;
+}
+.project-detail-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: var(--radius);
+  border: 3px solid var(--surface-1);
+  object-fit: cover;
+  flex-shrink: 0;
+  box-shadow: var(--shadow);
+  background: var(--surface-3);
+}
+.project-detail-icon-fallback {
+  display: grid;
+  place-items: center;
+  font-size: 1.6rem;
+  font-weight: 800;
+  color: var(--copy-muted);
+  font-family: var(--display);
+}
+.project-detail-identity {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.project-detail-identity h3 {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 800;
+  color: var(--copy);
+  font-family: var(--display);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.project-detail-identity span {
+  font-size: 0.8rem;
+  color: var(--copy-muted);
+}
+
+/* ---- Stats grid ---- */
+.project-detail-stats {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+}
+.project-detail-stat {
+  display: grid;
+  gap: 2px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  border: 1px solid var(--line);
+  min-width: 80px;
+}
+.project-detail-stat span {
+  font-size: 0.68rem;
+  color: var(--copy-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+.project-detail-stat strong {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--copy);
+}
+
+/* ---- Description ---- */
+.project-detail-description {
+  margin: 16px 0 12px;
+  color: var(--copy-dim);
+  font-size: 0.88rem;
+  line-height: 1.7;
+  flex: 1;
+  overflow-y: auto;
+}
+
+/* ---- Meta chips ---- */
+.project-detail-meta {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+  margin-top: 4px;
+}
+.project-detail-meta span {
+  font-size: 0.75rem;
+  color: var(--copy-dim);
+  background: var(--surface-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  padding: 4px 10px;
+}
+
+/* ---- Actions footer ---- */
+.project-detail-sheet .modal-actions {
+  padding: 16px 24px;
+  border-top: 1px solid var(--line);
+  background: var(--surface-2);
+  justify-content: flex-end;
+  gap: 10px;
+  margin: 0 -0px;
+}

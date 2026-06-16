@@ -46,11 +46,11 @@
   font-weight: 600; font-size: 0.68rem;
   letter-spacing: 0.12em; text-transform: uppercase;
 }
-.header-actions { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; justify-content: flex-end; }
+.header-actions { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; justify-content: flex-end; }
 .header-select { display: grid; gap: 6px; min-width: min(100%,340px); flex: 1 1 300px; }
 
 /* Header additions */
-.header-accent-bar { width: 4px; height: 32px; border-radius: 999px; flex: 0 0 auto; box-shadow: 0 0 10px currentColor; }
+.header-accent-bar { width: 4px; height: 32px; border-radius: 999px; flex: 0 0 auto; }
 .header-title-group { display: grid; gap: 2px; }
 .header-title {
   font-size: clamp(1.2rem,1.8vw,1.6rem); font-weight: 800;
@@ -61,14 +61,7 @@
 .header-copy { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .header-profile-selector { display: grid; gap: 4px; min-width: 220px; }
 .header-profile-label { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--copy-muted); }
-.header-icon-btn {
-  width: 38px; height: 38px; display: grid; place-items: center;
-  border-radius: var(--radius); border: 1px solid var(--line);
-  background: var(--surface-3); color: var(--copy-dim);
-  font-size: 1.1rem; cursor: pointer; flex: 0 0 auto;
-  transition: background 150ms var(--ease), color 150ms var(--ease), border-color 150ms var(--ease), transform 200ms var(--ease);
-}
-.header-icon-btn:hover { background: var(--surface-4); color: var(--copy); border-color: var(--line-strong); transform: rotate(180deg); }
+
 
 .section-copy { min-width: 0; }
 .section-copy h3 { font-size: 1.1rem; font-weight: 700; color: var(--copy); margin: 0; }

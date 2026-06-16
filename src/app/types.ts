@@ -249,8 +249,8 @@ export type FabricInstallResult = {
 export type LoaderCatalog = {
   loader: LoaderId;
   minecraftVersion: string;
-  installerVersion: LoaderVersionSummary;
-  recommendedLoader: LoaderVersionSummary;
+  installerVersion: LoaderVersionSummary | null;
+  recommendedLoader: LoaderVersionSummary | null;
   availableGameVersions: MinecraftVersionSummary[];
   availableLoaderVersions: LoaderVersionSummary[];
 };

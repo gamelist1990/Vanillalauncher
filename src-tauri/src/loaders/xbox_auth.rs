@@ -1329,9 +1329,7 @@ fn merge_xbox_identity_into_launcher_account(
 }
 
 fn secure_launch_token_cache_path() -> PathBuf {
-    env::temp_dir()
-        .join("VanillaLauncher")
-        .join("launch-auth-cache.bin")
+    crate::settings::launch_auth_cache_path()
 }
 
 fn secure_launch_token_cache_keys(

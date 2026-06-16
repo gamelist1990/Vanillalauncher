@@ -1,0 +1,173 @@
+/* =====================================================
+   Profile Visual Modal
+   ===================================================== */
+
+/* Visual modal */
+.visual-modal-fields {
+  display: grid;
+  gap: 12px;
+}
+
+.visual-preview {
+  width: 100%;
+  min-height: 120px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--line);
+  background: var(--surface-3) center / cover no-repeat;
+  overflow: hidden;
+}
+
+/* =====================================================
+   Profile Visual Modal — Creative UI
+   ===================================================== */
+
+/* ライブプレビューカード */
+.visual-preview-card {
+  position: relative;
+  width: 100%;
+  min-height: 100px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--line-strong);
+  background: var(--surface-3) center / cover no-repeat;
+  overflow: hidden;
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  padding: 16px;
+}
+
+.visual-preview-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, rgba(0,0,0,0.55) 0%, transparent 60%);
+  pointer-events: none;
+}
+
+.visual-preview-icon-wrap {
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius);
+  border: 2px solid rgba(255,255,255,0.25);
+  overflow: hidden;
+  background: var(--surface-4);
+}
+
+.visual-preview-icon-wrap img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.visual-preview-icon-fallback {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: var(--copy-dim);
+  font-family: var(--display);
+}
+
+.visual-preview-copy {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.visual-preview-name {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.6);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.visual-preview-sub {
+  font-size: 0.72rem;
+  color: rgba(255,255,255,0.65);
+  text-shadow: 0 1px 3px rgba(0,0,0,0.5);
+}
+
+/* ファイル選択フィールド */
+.visual-file-field {
+  display: grid;
+  gap: 6px;
+}
+
+.visual-file-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.visual-file-label {
+  font-size: 0.78rem;
+  color: var(--copy-dim);
+  font-weight: 500;
+}
+
+.visual-file-clear {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--copy-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  transition: color 120ms, background 120ms;
+}
+
+.visual-file-clear:hover {
+  color: var(--danger);
+  background: rgba(214, 93, 93, 0.1);
+}
+
+.visual-file-pick {
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: var(--radius);
+  border: 1px dashed var(--line-strong);
+  background: var(--surface-3);
+  color: var(--copy-dim);
+  font-size: 0.88rem;
+  cursor: pointer;
+  transition: background 150ms, border-color 150ms, color 150ms, transform 100ms var(--ease);
+}
+
+.visual-file-pick:hover {
+  background: var(--surface-4);
+  border-color: var(--accent-mid);
+  color: var(--copy);
+  transform: translateY(-1px);
+}
+
+.visual-file-pick-icon {
+  font-size: 1.1rem;
+  flex-shrink: 0;
+}
+
+.visual-file-path {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--copy-muted);
+  word-break: break-all;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-4);
+  border: 1px solid var(--line);
+}

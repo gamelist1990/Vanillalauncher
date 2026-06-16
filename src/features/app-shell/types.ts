@@ -12,6 +12,7 @@ export type ConfirmDialogState = {
 export type ProfileVisualDialogState = {
   profileId: string;
   profileName: string;
+  draftName: string;
   iconUrl: string;
   backgroundImageUrl: string;
 };

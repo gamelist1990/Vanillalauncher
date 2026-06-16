@@ -1,0 +1,310 @@
+/* =====================================================
+   Launcher Account Modal
+   ===================================================== */
+
+/* =====================================================
+   Launcher Account Modal
+   ===================================================== */
+
+.launcher-account-sheet {
+  max-height: min(90vh, 720px);
+  overflow-y: auto;
+}
+
+/* Scan status */
+.launcher-account-scan-status {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  background: var(--surface-3);
+  border: 1px solid var(--line);
+}
+
+.launcher-account-scan-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.launcher-account-scan-copy strong {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--copy);
+}
+
+.launcher-account-scan-copy span {
+  font-size: 0.82rem;
+  color: var(--copy-dim);
+}
+
+.launcher-account-scan-progress {
+  display: grid;
+  gap: 8px;
+}
+
+.launcher-account-scan-progress-track {
+  display: block;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-4);
+  overflow: hidden;
+}
+
+.launcher-account-scan-progress-bar {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent) 0%, #6aa84f 60%, #8dbf67 100%);
+  box-shadow: 0 0 8px rgba(59,133,38,0.32);
+  transition: width 200ms var(--ease);
+  /* indeterminate animation */
+  animation: scan-indeterminate 1.4s ease-in-out infinite;
+  width: 40%;
+}
+
+.launcher-account-scan-progress.is-determinate .launcher-account-scan-progress-bar {
+  animation: none;
+}
+
+@keyframes scan-indeterminate {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
+}
+
+.launcher-account-scan-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.launcher-account-scan-progress-note {
+  font-size: 0.78rem;
+  color: var(--copy-dim);
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.launcher-account-scan-progress-value {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+}
+
+/* Overview stats */
+.launcher-account-overview {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  transition: opacity 200ms;
+}
+
+.launcher-account-overview.is-scanning {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.launcher-account-overview article {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 3px;
+}
+
+.launcher-account-overview article span {
+  font-size: 0.68rem;
+  color: var(--copy-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+}
+
+.launcher-account-overview article strong {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--copy);
+}
+
+/* Account list */
+.launcher-account-list {
+  display: grid;
+  gap: 6px;
+  max-height: 300px;
+  overflow-y: auto;
+  transition: opacity 200ms;
+}
+
+.launcher-account-list.is-scanning {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+/* Account row */
+.launcher-account-row {
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--surface-3);
+  color: var(--copy);
+  cursor: pointer;
+  transition: background 150ms, border-color 150ms, box-shadow 150ms, transform 150ms var(--ease);
+}
+
+.launcher-account-row.is-selectable:not(:disabled):hover {
+  background: var(--surface-4);
+  border-color: var(--line-strong);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.launcher-account-row.is-active {
+  border-color: var(--accent-mid);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px var(--accent-soft);
+}
+
+.launcher-account-row.is-detected-only {
+  border-style: dashed;
+  border-color: var(--accent-mid);
+  background: var(--accent-soft);
+}
+
+.launcher-account-row:disabled {
+  cursor: default;
+  opacity: 0.75;
+}
+
+/* Row copy */
+.launcher-account-row-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.launcher-account-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.launcher-account-name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--copy);
+}
+
+.launcher-account-inline-check {
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.launcher-account-inline-check.is-owned {
+  color: var(--accent);
+}
+
+.launcher-account-row-action {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--copy-dim);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.launcher-account-row-action.is-active {
+  color: var(--accent);
+}
+
+.launcher-account-row-action.is-muted {
+  color: var(--info);
+}
+
+.launcher-account-row-copy > span:nth-child(2) {
+  font-size: 0.8rem;
+  color: var(--copy-dim);
+}
+
+/* Meta tags */
+.launcher-account-meta {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 2px;
+}
+
+.launcher-account-tag {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  border: 1px solid var(--line);
+  background: var(--surface-4);
+  color: var(--copy-dim);
+}
+
+.launcher-account-tag.is-launcher {
+  border-color: var(--accent-mid);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.launcher-account-tag.is-detected {
+  border-color: var(--accent-mid);
+  background: var(--accent-soft);
+  color: var(--info);
+}
+
+.launcher-account-tag.is-owned {
+  border-color: var(--accent-mid);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.launcher-account-tag.is-neutral {
+  border-color: var(--line);
+  background: var(--surface-3);
+  color: var(--copy-muted);
+}
+
+/* Row note */
+.launcher-account-row-note {
+  font-size: 0.76rem;
+  color: var(--copy-muted);
+  line-height: 1.5;
+  margin-top: 2px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+}
+
+/* Empty state */
+.launcher-account-empty {
+  padding: 24px;
+  text-align: center;
+  display: grid;
+  gap: 6px;
+  border-radius: var(--radius);
+  background: var(--surface-3);
+  border: 1px dashed var(--line-strong);
+}
+
+.launcher-account-empty strong {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--copy);
+}
+
+.launcher-account-empty span {
+  font-size: 0.82rem;
+  color: var(--copy-dim);
+  line-height: 1.55;
+}

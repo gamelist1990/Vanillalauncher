@@ -14,29 +14,33 @@ use models::{
 use settings::{AppSettings, DebugExportResult, PerformanceLiteMode, SoftwareStatus};
 
 #[tauri::command]
-fn get_launcher_state() -> Result<LauncherSnapshot, String> {
-    let mut snapshot = minecraft::load_launcher_snapshot()?;
-    let launcher_accounts = loaders::get_launcher_accounts()?;
+async fn get_launcher_state() -> Result<LauncherSnapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut snapshot = minecraft::load_launcher_snapshot()?;
+        let launcher_accounts = loaders::get_launcher_accounts()?;
 
-    if let Some(active_account) = snapshot.active_account.as_mut() {
-        if let Some(selected_account) = launcher_accounts
-            .iter()
-            .find(|entry| entry.local_id == active_account.local_id)
-        {
-            active_account.username = selected_account.username.clone();
-            active_account.has_java_access = selected_account.has_java_access;
+        if let Some(active_account) = snapshot.active_account.as_mut() {
+            if let Some(selected_account) = launcher_accounts
+                .iter()
+                .find(|entry| entry.local_id == active_account.local_id)
+            {
+                active_account.username = selected_account.username.clone();
+                active_account.has_java_access = selected_account.has_java_access;
+            }
+        } else if let Some(selected_account) = launcher_accounts.iter().find(|entry| entry.is_active) {
+            snapshot.active_account = Some(models::ActiveLauncherAccount {
+                local_id: selected_account.local_id.clone(),
+                username: selected_account.username.clone(),
+                auth_source: selected_account.auth_source.clone(),
+                has_java_access: selected_account.has_java_access,
+            });
         }
-    } else if let Some(selected_account) = launcher_accounts.iter().find(|entry| entry.is_active) {
-        snapshot.active_account = Some(models::ActiveLauncherAccount {
-            local_id: selected_account.local_id.clone(),
-            username: selected_account.username.clone(),
-            auth_source: selected_account.auth_source.clone(),
-            has_java_access: selected_account.has_java_access,
-        });
-    }
 
-    snapshot.launcher_accounts = launcher_accounts;
-    Ok(snapshot)
+        snapshot.launcher_accounts = launcher_accounts;
+        Ok(snapshot)
+    })
+    .await
+    .map_err(|error| format!("Launcher 状態読み込みジョブの実行に失敗しました: {error}"))?
 }
 
 #[tauri::command]
@@ -339,6 +343,16 @@ fn clear_temp_cache() -> Result<ActionResult, String> {
 }
 
 #[tauri::command]
+fn read_temp_cache_json(key: String) -> Result<Option<String>, String> {
+    settings::read_temp_cache_json(key)
+}
+
+#[tauri::command]
+fn write_temp_cache_json(key: String, json_text: String) -> Result<ActionResult, String> {
+    settings::write_temp_cache_json(key, json_text)
+}
+
+#[tauri::command]
 fn get_software_status() -> Result<SoftwareStatus, String> {
     settings::get_software_status()
 }
@@ -409,6 +423,8 @@ pub fn run() {
             update_app_settings,
             ensure_java_runtime_available,
             clear_temp_cache,
+            read_temp_cache_json,
+            write_temp_cache_json,
             get_software_status,
             export_debug_log,
             clear_log,

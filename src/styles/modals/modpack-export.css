@@ -1,0 +1,55 @@
+/* =====================================================
+   Modpack Export Format Modal
+   ===================================================== */
+
+/* =====================================================
+   Modpack Export Format Modal
+   ===================================================== */
+
+.export-format-list {
+  display: grid;
+  gap: 10px;
+}
+
+.export-format-card {
+  width: 100%;
+  text-align: left;
+  padding: 14px 16px;
+  display: grid;
+  gap: 4px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--surface-3);
+  color: var(--copy);
+  cursor: pointer;
+  transition: background 150ms, border-color 150ms, box-shadow 150ms, transform 100ms var(--ease);
+}
+
+.export-format-card:hover {
+  background: var(--surface-4);
+  border-color: var(--line-strong);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.export-format-card.is-selected {
+  border-color: var(--accent-mid);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px var(--accent-mid);
+}
+
+.export-format-card strong {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--copy);
+}
+
+.export-format-card.is-selected strong {
+  color: var(--accent);
+}
+
+.export-format-card span {
+  font-size: 0.82rem;
+  color: var(--copy-dim);
+  line-height: 1.55;
+}

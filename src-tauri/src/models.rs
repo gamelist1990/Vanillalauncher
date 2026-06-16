@@ -240,13 +240,13 @@ pub struct FabricInstallResult {
     pub loader_version: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct LoaderCatalog {
     pub loader: String,
     pub minecraft_version: String,
-    pub installer_version: LoaderVersionSummary,
-    pub recommended_loader: LoaderVersionSummary,
+    pub installer_version: Option<LoaderVersionSummary>,
+    pub recommended_loader: Option<LoaderVersionSummary>,
     pub available_game_versions: Vec<MinecraftVersionSummary>,
     pub available_loader_versions: Vec<LoaderVersionSummary>,
 }

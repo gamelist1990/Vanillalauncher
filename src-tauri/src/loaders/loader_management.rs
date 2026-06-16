@@ -1,5 +1,54 @@
 use super::*;
 
+const LOADER_CATALOG_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(60 * 15);
+
+struct LoaderCatalogCacheEntry {
+    cached_at: std::time::Instant,
+    catalog: LoaderCatalog,
+}
+
+static LOADER_CATALOG_CACHE: std::sync::OnceLock<
+    tokio::sync::Mutex<std::collections::HashMap<String, LoaderCatalogCacheEntry>>,
+> = std::sync::OnceLock::new();
+
+fn loader_catalog_cache(
+) -> &'static tokio::sync::Mutex<std::collections::HashMap<String, LoaderCatalogCacheEntry>> {
+    LOADER_CATALOG_CACHE.get_or_init(|| tokio::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+fn build_loader_catalog_cache_key(loader: &str, game_version: Option<&str>) -> String {
+    let version = game_version
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("latest");
+
+    format!("{loader}:{version}")
+}
+
+async fn get_cached_loader_catalog(cache_key: &str) -> Option<LoaderCatalog> {
+    let mut cache = loader_catalog_cache().lock().await;
+
+    if let Some(entry) = cache.get(cache_key) {
+        if entry.cached_at.elapsed() <= LOADER_CATALOG_CACHE_TTL {
+            return Some(entry.catalog.clone());
+        }
+    }
+
+    cache.remove(cache_key);
+    None
+}
+
+async fn put_cached_loader_catalog(cache_key: String, catalog: &LoaderCatalog) {
+    let mut cache = loader_catalog_cache().lock().await;
+    cache.insert(
+        cache_key,
+        LoaderCatalogCacheEntry {
+            cached_at: std::time::Instant::now(),
+            catalog: catalog.clone(),
+        },
+    );
+}
+
 pub async fn get_fabric_catalog(game_version: Option<String>) -> Result<FabricCatalog, String> {
     let client = fabric_client()?;
     let game_versions = client
@@ -56,7 +105,6 @@ pub async fn get_fabric_catalog(game_version: Option<String>) -> Result<FabricCa
 
     let available_loader_versions: Vec<LoaderVersionSummary> = loader_versions
         .iter()
-        .take(12)
         .map(|entry| LoaderVersionSummary {
             id: entry.loader.version.clone(),
             stable: entry.loader.stable,
@@ -75,7 +123,6 @@ pub async fn get_fabric_catalog(game_version: Option<String>) -> Result<FabricCa
         .filter(|entry| {
             !entry.version.ends_with("_unobfuscated") && !entry.version.ends_with("_original")
         })
-        .take(28)
         .map(|entry| MinecraftVersionSummary {
             id: entry.version.clone(),
             stable: entry.stable,
@@ -117,14 +164,21 @@ pub async fn get_loader_catalog(
     loader: String,
     game_version: Option<String>,
 ) -> Result<LoaderCatalog, String> {
-    match normalize_loader(Some(&loader)) {
+    let normalized_loader = normalize_loader(Some(&loader)).to_string();
+    let cache_key = build_loader_catalog_cache_key(&normalized_loader, game_version.as_deref());
+
+    if let Some(catalog) = get_cached_loader_catalog(&cache_key).await {
+        return Ok(catalog);
+    }
+
+    let catalog = match normalized_loader.as_str() {
         "fabric" => {
             let catalog = get_fabric_catalog(game_version).await?;
             Ok(LoaderCatalog {
                 loader: "fabric".to_string(),
                 minecraft_version: catalog.minecraft_version,
-                installer_version: catalog.latest_installer,
-                recommended_loader: catalog.recommended_loader,
+                installer_version: Some(catalog.latest_installer),
+                recommended_loader: Some(catalog.recommended_loader),
                 available_game_versions: catalog.available_game_versions,
                 available_loader_versions: catalog.available_loader_versions,
             })
@@ -133,7 +187,10 @@ pub async fn get_loader_catalog(
         "forge" => get_forge_catalog(game_version).await,
         "neoforge" => get_neoforge_catalog(game_version).await,
         _ => Err("未対応の Loader です。".to_string()),
-    }
+    }?;
+
+    put_cached_loader_catalog(cache_key, &catalog).await;
+    Ok(catalog)
 }
 
 pub async fn install_fabric_loader(
@@ -331,9 +388,12 @@ async fn ensure_quilt_version_installed(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
-        .unwrap_or_else(|| catalog.recommended_loader.id.clone());
+        .unwrap_or_else(|| catalog.recommended_loader.as_ref().map(|r| r.id.clone()).unwrap_or_default());
+    let installer_id = catalog.installer_version.as_ref()
+        .map(|v| v.id.clone())
+        .ok_or_else(|| "Quilt インストーラーのバージョンが見つかりません。".to_string())?;
     let version_id = run_quilt_installer_in_stage(
-        &download_quilt_installer(&catalog.installer_version.id).await?,
+        &download_quilt_installer(&installer_id).await?,
         &root,
         minecraft_version,
         &resolved_loader_version,
@@ -442,11 +502,11 @@ async fn get_quilt_catalog(game_version: Option<String>) -> Result<LoaderCatalog
     Ok(LoaderCatalog {
         loader: "quilt".to_string(),
         minecraft_version: selected_version,
-        installer_version: LoaderVersionSummary {
+        installer_version: Some(LoaderVersionSummary {
             id: installer_version.clone(),
             stable: is_stable_loader_version(&installer_version),
-        },
-        recommended_loader,
+        }),
+        recommended_loader: Some(recommended_loader),
         available_game_versions,
         available_loader_versions,
     })
@@ -489,13 +549,7 @@ async fn build_maven_loader_catalog(
         .iter()
         .find(|entry| entry.stable)
         .cloned()
-        .or_else(|| available_loader_versions.first().cloned())
-        .ok_or_else(|| {
-            format!(
-                "{selected_version} 向けの {} Loader が見つかりません。",
-                loader_display_name(loader)
-            )
-        })?;
+        .or_else(|| available_loader_versions.first().cloned());
 
     Ok(LoaderCatalog {
         loader: loader.to_string(),
@@ -778,14 +832,16 @@ async fn build_available_game_versions(
             stable: entry.version_type == "release",
             kind: entry.version_type,
         });
-
-        if available_game_versions.len() >= 28 {
-            break;
-        }
     }
 
     let selected_version = preferred
-        .clone()
+        .as_ref()
+        .filter(|value| {
+            available_game_versions
+                .iter()
+                .any(|entry| &entry.id == *value)
+        })
+        .cloned()
         .or_else(|| {
             available_game_versions
                 .iter()
@@ -799,20 +855,6 @@ async fn build_available_game_versions(
         })
         .ok_or_else(|| "対象の Minecraft バージョンを決定できません。".to_string())?;
 
-    if !available_game_versions
-        .iter()
-        .any(|entry| entry.id == selected_version)
-    {
-        available_game_versions.insert(
-            0,
-            MinecraftVersionSummary {
-                id: selected_version.clone(),
-                stable: false,
-                kind: "custom".to_string(),
-            },
-        );
-    }
-
     Ok((available_game_versions, selected_version))
 }
 
@@ -823,7 +865,6 @@ async fn fetch_quilt_loader_versions() -> Result<Vec<LoaderVersionSummary>, Stri
         versions
             .into_iter()
             .rev()
-            .take(12)
             .map(|version| LoaderVersionSummary {
                 stable: is_stable_loader_version(&version),
                 id: version,
@@ -1042,7 +1083,7 @@ async fn download_neoforge_installer(version: &str) -> Result<PathBuf, String> {
 }
 
 fn loader_cache_dir() -> Result<PathBuf, String> {
-    let cache_dir = std::env::temp_dir().join("vanillalauncher");
+    let cache_dir = crate::settings::loader_cache_dir();
     fs::create_dir_all(&cache_dir)
         .map_err(|error| format!("一時フォルダを準備できませんでした: {error}"))?;
     Ok(cache_dir)
@@ -1142,7 +1183,7 @@ fn run_staged_installer(
 }
 
 fn prepare_stage_root(loader: &str) -> Result<PathBuf, String> {
-    let stage_root = std::env::temp_dir().join("vanillalauncher").join(format!(
+    let stage_root = crate::settings::loader_stage_dir().join(format!(
         "{loader}-stage-{}",
         chrono::Local::now().timestamp_millis()
     ));
@@ -1332,9 +1373,7 @@ async fn download_fabric_installer(installer_version: &str) -> Result<PathBuf, S
         .find(|entry| entry.version == installer_version)
         .ok_or_else(|| format!("Fabric Installer {installer_version} が見つかりません。"))?;
 
-    let cache_dir = std::env::temp_dir().join("vanillalauncher");
-    fs::create_dir_all(&cache_dir)
-        .map_err(|error| format!("一時フォルダを準備できませんでした: {error}"))?;
+    let cache_dir = loader_cache_dir()?;
     let target_path = cache_dir.join(format!("fabric-installer-{}.jar", installer.version));
 
     if !target_path.exists() {

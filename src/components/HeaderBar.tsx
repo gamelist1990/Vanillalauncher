@@ -27,7 +27,6 @@ type HeaderBarProps = {
   profiles: LauncherProfile[];
   selectedProfileId: string;
   sidebarOpen: boolean;
-  onRefresh: () => void;
   onSelectProfile: (profileId: string) => void;
   onToggleSidebar: () => void;
 };
@@ -38,7 +37,6 @@ export function HeaderBar({
   profiles,
   selectedProfileId,
   sidebarOpen,
-  onRefresh,
   onSelectProfile,
   onToggleSidebar,
 }: HeaderBarProps) {
@@ -104,16 +102,7 @@ export function HeaderBar({
           </div>
         ) : null}
 
-        {/* リフレッシュボタン */}
-        <button
-          type="button"
-          className="header-icon-btn"
-          onClick={onRefresh}
-          title="再読み込み"
-          aria-label="データを再読み込み"
-        >
-          ↻
-        </button>
+
       </div>
     </header>
   );

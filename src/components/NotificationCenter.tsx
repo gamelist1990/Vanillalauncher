@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type { Notice, ProgressState } from "../app/types";
 
 type NotificationCenterProps = {
@@ -14,22 +14,41 @@ export function NotificationCenter({
   onDismissNotice,
   onOpenProgress,
 }: NotificationCenterProps) {
+  // タイマーを notice.id ごとに管理することで、他の通知の追加/削除でタイマーがリセットされないようにする
+  const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
   useEffect(() => {
-    if (notices.length === 0) {
-      return;
+    const currentIds = new Set(notices.map((n) => n.id));
+
+    // 既に消えた notice のタイマーを削除
+    for (const [id, timer] of timersRef.current) {
+      if (!currentIds.has(id)) {
+        window.clearTimeout(timer);
+        timersRef.current.delete(id);
+      }
     }
 
-    const timers = notices.map((notice) =>
-      window.setTimeout(
-        () => onDismissNotice(notice.id),
-        notice.tone === "error" ? 6400 : 4200,
-      ),
-    );
-
-    return () => {
-      timers.forEach((timer) => window.clearTimeout(timer));
-    };
+    // 新しい notice にだけタイマーをセット（既存のものはリセットしない）
+    for (const notice of notices) {
+      if (!timersRef.current.has(notice.id)) {
+        const delay = notice.tone === "error" ? 6400 : 4200;
+        const timer = window.setTimeout(() => {
+          onDismissNotice(notice.id);
+          timersRef.current.delete(notice.id);
+        }, delay);
+        timersRef.current.set(notice.id, timer);
+      }
+    }
   }, [notices, onDismissNotice]);
+
+  // アンマウント時に残タイマーをすべて解除
+  useEffect(() => {
+    return () => {
+      for (const timer of timersRef.current.values()) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, []);
 
   if (notices.length === 0 && progressItems.length === 0) {
     return null;

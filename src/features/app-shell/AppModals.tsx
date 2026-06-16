@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { ConfirmModal } from "../../components/ConfirmModal";
 import { LocalModImportModal } from "../../components/LocalModImportModal";
 import { ModpackExportModal } from "../../components/ModpackExportModal";
@@ -30,6 +31,7 @@ type AppModalsProps = {
   onConfirmDialog: () => void;
   onCloseProfileVisualDialog: () => void;
   onConfirmProfileVisuals: () => void;
+  onChangeProfileVisualName: (value: string) => void;
   onChangeProfileVisualIconUrl: (value: string) => void;
   onChangeProfileVisualBackgroundImageUrl: (value: string) => void;
   onCloseProfileNameDialog: () => void;
@@ -62,6 +64,7 @@ export function AppModals({
   onConfirmDialog,
   onCloseProfileVisualDialog,
   onConfirmProfileVisuals,
+  onChangeProfileVisualName,
   onChangeProfileVisualIconUrl,
   onChangeProfileVisualBackgroundImageUrl,
   onCloseProfileNameDialog,
@@ -78,6 +81,27 @@ export function AppModals({
   onLocalModImported,
   onLocalModError,
 }: AppModalsProps) {
+  // いずれかのモーダルが開いている場合は背面スクロールをロック
+  const anyModalOpen =
+    confirmDialog !== null ||
+    profileVisualDialog !== null ||
+    profileNameDialog !== null ||
+    modpackVersionDialog !== null ||
+    modpackExportDialog !== null ||
+    (progressDetailDialog !== null && progressDetailSnapshot !== null) ||
+    localModImportOpen;
+
+  useEffect(() => {
+    if (!anyModalOpen) {
+      return undefined;
+    }
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [anyModalOpen]);
+
   return (
     <>
       <ConfirmModal
@@ -92,12 +116,13 @@ export function AppModals({
 
       <ProfileVisualModal
         open={profileVisualDialog !== null}
-        title={profileVisualDialog?.profileName ?? "外観編集"}
-        description="カードの見た目を変えます。空欄にすると既定のアイコンや壁紙へ戻ります。"
+        profileName={profileVisualDialog?.profileName ?? "外観編集"}
+        draftName={profileVisualDialog?.draftName ?? ""}
         iconUrl={profileVisualDialog?.iconUrl ?? ""}
         backgroundImageUrl={profileVisualDialog?.backgroundImageUrl ?? ""}
         onClose={onCloseProfileVisualDialog}
         onConfirm={onConfirmProfileVisuals}
+        onChangeName={onChangeProfileVisualName}
         onChangeIconUrl={onChangeProfileVisualIconUrl}
         onChangeBackgroundImageUrl={onChangeProfileVisualBackgroundImageUrl}
       />

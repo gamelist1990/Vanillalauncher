@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { formatLoader } from "../app/formatters";
 import type {
   LauncherProfile,
@@ -8,7 +7,8 @@ import type {
   LoaderVersionSummary,
   MinecraftVersionSummary,
 } from "../app/types";
-import { DropdownSelect } from "../components/DropdownSelect";
+import { useState } from "react";
+import { MinecraftVersionSelectModal, type VersionTab } from "../components/MinecraftVersionSelectModal";
 
 type LoadersViewProps = {
   activeLoader: LoaderId;
@@ -47,98 +47,148 @@ export function LoadersView({
   onOpenGuide,
   onLaunchOfficial,
 }: LoadersViewProps) {
-  const [openDropdown, setOpenDropdown] = useState<"version" | "loader" | null>(null);
+  const [versionModalOpen, setVersionModalOpen] = useState(false);
+  const [versionModalTab, setVersionModalTab] = useState<VersionTab>("minecraft");
   const activeGuide = guides.find((guide) => guide.id === activeLoader);
-  const standbyGuides = guides.filter((guide) => guide.id !== activeLoader);
   const installing = busyAction === "loader-install";
-  const versionOptions = (catalog?.availableGameVersions ?? []).map((version) => ({
-    value: version.id,
-    label: renderVersionLabel(version),
-  }));
-  const loaderOptions = (catalog?.availableLoaderVersions ?? []).map((loader) => ({
-    value: loader.id,
-    label: renderLoaderLabel(loader),
-  }));
+  const selectedGameVersionSummary = catalog?.availableGameVersions.find(
+    (version) => version.id === selectedVersion,
+  );
+  const selectedLoaderVersionSummary = catalog?.availableLoaderVersions.find(
+    (loader) => loader.id === selectedLoaderVersion,
+  );
 
   return (
     <section className="workspace loaders-workspace">
-      {/* ===== ヘッダー ===== */}
-      <div className="loader-header panel">
-        <div className="loader-header-top">
-          <div>
-            <p className="eyebrow">Loaders</p>
-            <h2 className="header-title">Loader を導入する</h2>
-            <p className="header-subtitle">
-              Vanilla 本体を補完しながら、選択した Loader のバージョンと起動構成をまとめて追加します
-            </p>
-          </div>
-          {/* Loader 切り替え */}
-          <div className="segmented">
-            {guides.map((guide) => (
-              <button
-                key={guide.id}
-                type="button"
-                className={guide.id === activeLoader ? "is-active" : ""}
-                onClick={() => onSelectLoader(guide.id)}
-              >
-                {guide.name}
-              </button>
-            ))}
-          </div>
+      {/* ===== ページヘッダー ===== */}
+      <header className="loader-page-header">
+        <div>
+          <p className="eyebrow">Loaders</p>
+          <h2 className="header-title">Loader を導入する</h2>
+          <p className="header-subtitle">
+            Vanilla 本体を補完しながら、選択した Loader のバージョンと起動構成をまとめて追加します
+          </p>
         </div>
-
-        {/* 状態チップ */}
         <div className="loader-status-chips">
           <span className="badge">対象構成: {profile?.name ?? "未選択"}</span>
           <span className="badge badge-loader">{activeGuide?.name ?? formatLoader(activeLoader)}</span>
-          <span className="badge">Installer: {catalog?.installerVersion.id ?? "読込中"}</span>
+          <span className="badge">Installer: {catalog?.installerVersion?.id ?? "読込中"}</span>
           {loadingCatalog ? <span className="badge">同期中...</span> : null}
         </div>
-      </div>
+      </header>
 
-      {/* ===== メインコンテンツ: 2列 ===== */}
-      <div className="loaders-main-grid">
-        {/* 左: セットアップフォーム */}
-        <div className="loader-setup-card panel">
-          <div className="panel-heading">
-            <h3>{activeGuide?.name ?? formatLoader(activeLoader)} セットアップ</h3>
-            <span className="badge badge-loader">自動導入可能</span>
+      {/* ===== メインレイアウト ===== */}
+      <div className="loaders-layout">
+
+        {/* ── 左レール: Loader選択 + 導入内容 ── */}
+        <aside className="loaders-rail panel">
+          <div className="loader-rail-section">
+            <p className="loader-rail-label">Loader を選択</p>
+            <div className="loader-select-list">
+              {guides.map((guide) => (
+                <button
+                  key={guide.id}
+                  type="button"
+                  className={`loader-select-item ${guide.id === activeLoader ? "is-active" : ""}`}
+                  onClick={() => onSelectLoader(guide.id)}
+                >
+                  <span className="loader-select-body">
+                    <strong>{guide.name}</strong>
+                    <small>{guide.kicker}</small>
+                  </span>
+                  {guide.id === activeLoader && (
+                    <span className="loader-select-check" aria-hidden="true">✓</span>
+                  )}
+                </button>
+              ))}
+            </div>
           </div>
 
-          <p className="loader-description">
-            {activeGuide?.detail ?? "導入したい Loader を選ぶと、互換バージョンをここに読み込みます。"}
-          </p>
 
-          <div className="loader-form">
-            <label>
-              <span>Minecraft バージョン</span>
-              <DropdownSelect
-                value={selectedVersion}
-                options={versionOptions}
-                open={openDropdown === "version"}
-                disabled={loadingCatalog}
-                emptyLabel="Minecraft バージョンを選択"
-                menuLabel="Minecraft バージョン一覧"
-                onOpenChange={(open) => setOpenDropdown(open ? "version" : null)}
-                onChange={onChangeVersion}
-              />
-            </label>
+        </aside>
 
-            <label>
-              <span>{activeGuide?.name ?? formatLoader(activeLoader)} Loader バージョン</span>
-              <DropdownSelect
-                value={selectedLoaderVersion}
-                options={loaderOptions}
-                open={openDropdown === "loader"}
-                disabled={loadingCatalog}
-                emptyLabel={`${activeGuide?.name ?? formatLoader(activeLoader)} Loader を選択`}
-                menuLabel={`${activeGuide?.name ?? formatLoader(activeLoader)} Loader 一覧`}
-                onOpenChange={(open) => setOpenDropdown(open ? "loader" : null)}
-                onChange={onChangeLoaderVersion}
-              />
-            </label>
+        {/* ── 右メイン: アクティブLoader情報 + フォーム ── */}
+        <div className="loader-main-panel">
 
-            <label>
+          {/* Loader info card */}
+          <div className="loader-active-info panel">
+            <div className="loader-active-info-header">
+              <div>
+                <span className="section-kicker">選択中の Loader</span>
+                <h3 className="loader-active-name">
+                  {activeGuide?.name ?? formatLoader(activeLoader)}
+                </h3>
+                <p className="loader-description">
+                  {activeGuide?.detail ?? "導入したい Loader を選ぶと、互換バージョンをここに読み込みます。"}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Setup form card */}
+          {catalog && catalog.availableLoaderVersions.length === 0 ? (
+            <div className="loader-unsupported panel">
+              <p className="loader-unsupported-msg">
+                {activeGuide?.name ?? formatLoader(activeLoader)} は、選択中の Minecraft バージョン向けの対応バージョンがありません。<br />
+                別の Minecraft バージョンを選ぶか、他の Loader をお試しください。
+              </p>
+            </div>
+          ) : (
+          <div className="loader-form-card panel">
+            <div className="loader-version-pickers">
+              <label>
+                <span>Minecraft バージョン</span>
+                <button
+                  type="button"
+                  className="loader-version-trigger"
+                  disabled={loadingCatalog}
+                  onClick={() => {
+                    setVersionModalTab("minecraft");
+                    setVersionModalOpen(true);
+                  }}
+                >
+                  <span>
+                    <strong>{selectedVersion || "バージョンを選択"}</strong>
+                    <small>
+                      {selectedGameVersionSummary
+                        ? renderVersionLabel(selectedGameVersionSummary)
+                        : "一覧から選択"}
+                    </small>
+                  </span>
+                  <span aria-hidden="true">選択</span>
+                </button>
+              </label>
+
+              <label>
+                <span>{activeGuide?.name ?? formatLoader(activeLoader)} Loader バージョン</span>
+                <button
+                  type="button"
+                  className="loader-version-trigger"
+                  disabled={loadingCatalog}
+                  onClick={() => {
+                    setVersionModalTab("loader");
+                    setVersionModalOpen(true);
+                  }}
+                >
+                  <span>
+                    <strong>
+                      {selectedLoaderVersion ||
+                        `${activeGuide?.name ?? formatLoader(activeLoader)} Loader を選択`}
+                    </strong>
+                    <small>
+                      {selectedLoaderVersionSummary
+                        ? renderLoaderLabel(selectedLoaderVersionSummary)
+                        : "一覧から選択"}
+                    </small>
+                  </span>
+                  <span aria-hidden="true">選択</span>
+                </button>
+              </label>
+            </div>
+
+            <hr className="loader-form-sep" />
+
+            <label className="loader-form-name">
               <span>作成する構成名</span>
               <input
                 value={profileName}
@@ -146,81 +196,50 @@ export function LoadersView({
                 placeholder={`${activeGuide?.name ?? formatLoader(activeLoader)} ${selectedVersion || "Profile"}`}
               />
             </label>
-          </div>
 
-          <div className="loader-actions">
-            <button
-              className="play-button"
-              type="button"
-              onClick={onInstallLoader}
-              disabled={!selectedVersion || !selectedLoaderVersion || installing || loadingCatalog}
-            >
-              {installing
-                ? `${activeGuide?.name ?? formatLoader(activeLoader)} を導入中...`
-                : `${activeGuide?.name ?? formatLoader(activeLoader)} を導入`}
-            </button>
-            <button className="secondary-button" type="button" onClick={onLaunchOfficial}>
-              公式 Launcher
-            </button>
-            <button
-              className="secondary-button"
-              type="button"
-              disabled={!activeGuide}
-              onClick={() => activeGuide && onOpenGuide(activeGuide.url)}
-            >
-              公式ページ
-            </button>
-          </div>
-        </div>
-
-        {/* 右: サイドバー情報 + 他のローダー */}
-        <div className="loader-sidebar-stack">
-          {/* インストール情報 */}
-          <div className="panel">
-            <div className="panel-heading">
-              <h3>導入の内容</h3>
-            </div>
-            <div className="loader-notes">
-              <div>
-                <span>導入先</span>
-                <strong>{profile?.name ?? "Minecraft Root 直下"}</strong>
-              </div>
-              <div>
-                <span>推奨 Loader</span>
-                <strong>{catalog?.recommendedLoader.id ?? "読込中"}</strong>
-              </div>
-              <div>
-                <span>現在の Loader</span>
-                <strong>{formatLoader(profile?.loader ?? "vanilla")}</strong>
-              </div>
-              <div>
-                <span>動作</span>
-                <strong>Version 追加 + 起動構成作成</strong>
-              </div>
+            <div className="loader-actions">
+              <button
+                className="play-button"
+                type="button"
+                onClick={onInstallLoader}
+                disabled={!selectedVersion || !selectedLoaderVersion || installing || loadingCatalog}
+              >
+                {installing
+                  ? `${activeGuide?.name ?? formatLoader(activeLoader)} を導入中...`
+                  : `${activeGuide?.name ?? formatLoader(activeLoader)} を導入`}
+              </button>
+              <button className="secondary-button" type="button" onClick={onLaunchOfficial}>
+                公式 Launcher
+              </button>
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={!activeGuide}
+                onClick={() => activeGuide && onOpenGuide(activeGuide.url)}
+              >
+                公式ページ
+              </button>
             </div>
           </div>
-
-          {/* 他のローダー */}
-          {standbyGuides.map((guide) => (
-            <div className="loader-alt-card panel" key={guide.id}>
-              <div className="loader-alt-header">
-                <div>
-                  <p className="loader-alt-name">{guide.name}</p>
-                  <p className="loader-detail">{guide.kicker}</p>
-                </div>
-                <button
-                  className="secondary-button compact"
-                  type="button"
-                  onClick={() => onSelectLoader(guide.id)}
-                >
-                  切り替え
-                </button>
-              </div>
-              <p className="loader-description">{guide.description}</p>
-            </div>
-          ))}
+          )}
         </div>
       </div>
+
+      {versionModalOpen ? (
+        <MinecraftVersionSelectModal
+          open={versionModalOpen}
+          loaderName={activeGuide?.name ?? formatLoader(activeLoader)}
+          gameVersions={catalog?.availableGameVersions ?? []}
+          loaderVersions={catalog?.availableLoaderVersions ?? []}
+          selectedGameVersion={selectedVersion}
+          selectedLoaderVersion={selectedLoaderVersion}
+          initialTab={versionModalTab}
+          loading={loadingCatalog}
+          onClose={() => setVersionModalOpen(false)}
+          onSelectGameVersion={onChangeVersion}
+          onSelectLoaderVersion={onChangeLoaderVersion}
+        />
+      ) : null}
     </section>
   );
 }
