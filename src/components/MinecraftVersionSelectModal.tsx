@@ -191,9 +191,6 @@ export function MinecraftVersionSelectModal({
   const workerRef = useRef<Worker | null>(null);
   const workerRequestIdRef = useRef(0);
 
-  // クエリ文字列は毎レンダーで重複計算するのではなく一度だけ計算する
-  const normalizedQuery = useMemo(() => query.trim().toLowerCase(), [query]);
-
   const selectedGame = useMemo(
     () => open ? gameVersions.find((entry) => entry.id === selectedGameVersion) ?? null : null,
     [gameVersions, open, selectedGameVersion],

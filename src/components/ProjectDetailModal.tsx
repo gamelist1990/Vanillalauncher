@@ -21,7 +21,6 @@ type ProjectDetailModalProps = {
 
 export function ProjectDetailModal({
   project,
-  mode,
   installLabel,
   installDisabled,
   installed,

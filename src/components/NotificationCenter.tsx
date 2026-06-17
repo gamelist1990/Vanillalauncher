@@ -15,7 +15,7 @@ export function NotificationCenter({
   onOpenProgress,
 }: NotificationCenterProps) {
   // タイマーを notice.id ごとに管理することで、他の通知の追加/削除でタイマーがリセットされないようにする
-  const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const timersRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     const currentIds = new Set(notices.map((n) => n.id));
