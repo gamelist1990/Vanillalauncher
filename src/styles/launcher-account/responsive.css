@@ -1,0 +1,49 @@
+/* Account Manager: responsive overrides */
+
+@media (max-width: 880px) {
+  .acct-mgr-pro-sheet {
+    width: calc(100vw - 20px);
+    height: min(92vh, 820px);
+    max-height: min(92vh, 820px);
+  }
+}
+
+@media (max-width: 760px) {
+  .acct-mgr-command-center {
+    grid-template-columns: 1fr;
+  }
+
+  .acct-mgr-filterbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 560px) {
+  .acct-mgr-tabs {
+    overflow-x: auto;
+  }
+
+  .acct-mgr-tab-btn small {
+    display: none;
+  }
+
+  .acct-mgr-row {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .acct-mgr-row-status {
+    width: 100%;
+  }
+
+  .acct-mgr-row-status-actions {
+    grid-template-columns: 1fr 1fr;
+    justify-items: stretch;
+  }
+
+  .acct-settings-stats {
+    flex-direction: column;
+    gap: 6px;
+  }
+}

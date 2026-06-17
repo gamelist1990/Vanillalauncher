@@ -310,20 +310,7 @@ function App() {
   }
 
   function pushAccountNotice(tone: Notice["tone"], text: string) {
-    setAccountNotices((current) => {
-      if (current.some((notice) => notice.tone === tone && notice.text === text)) {
-        return current;
-      }
-
-      return [
-        ...current.slice(-3),
-        {
-          id: createNoticeId(),
-          tone,
-          text,
-        },
-      ];
-    });
+    pushNotice(tone, text);
   }
 
   const dismissNotice = useCallback((noticeId: string) => {

@@ -3,7 +3,7 @@
 @import './modals/minecraft-version-picker.css';
 @import './modals/profile-visual.css';
 @import './modals/progress-detail.css';
-@import './modals/launcher-account.css';
+@import './launcher-account/index.css';
 @import './modals/project-detail.css';
 @import './modals/local-mod-import.css';
 @import './modals/modpack-export.css';

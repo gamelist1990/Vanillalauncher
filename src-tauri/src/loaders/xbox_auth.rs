@@ -1722,6 +1722,21 @@ pub(super) fn launcher_account_has_java_access_hint(
     account: &crate::minecraft::LauncherAccount,
     hints: &HashMap<String, bool>,
 ) -> bool {
+    if read_secure_launch_token(Some(account)).is_some() {
+        return true;
+    }
+
+    if account.auth_source.as_deref() == Some("microsoft-oauth")
+        && account
+            .access_token
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_some()
+    {
+        return true;
+    }
+
     account
         .xuid
         .as_deref()

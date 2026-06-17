@@ -1,0 +1,8 @@
+/* VanillaLauncher — Account Manager styles */
+@import './shell.css';
+@import './tabs.css';
+@import './accounts.css';
+@import './rows.css';
+@import './login.css';
+@import './settings.css';
+@import './responsive.css';

@@ -1,6 +1,6 @@
 /* Notification viewport */
 .notification-viewport {
-  position: fixed; bottom: 20px; right: 20px; z-index: 40;
+  position: fixed; bottom: 20px; right: 20px; z-index: 1000;
   width: min(360px, calc(100vw - 28px));
   display: grid; gap: 10px; pointer-events: none;
 }

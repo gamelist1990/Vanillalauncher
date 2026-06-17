@@ -1,0 +1,191 @@
+/* Account Manager: Microsoft login tab / OAuth overlay */
+
+.acct-mgr-login-tab-panel {
+  overflow-y: auto;
+  padding: 16px;
+  background: var(--surface-1);
+}
+
+.acct-mgr-login-card {
+  display: grid;
+  gap: 14px;
+  margin: auto;
+  width: min(420px, 100%);
+  padding: 22px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-sm);
+}
+
+.acct-mgr-login-card-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+  display: grid;
+  place-items: center;
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-sm);
+}
+
+.acct-mgr-login-panel {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(0, 164, 239, 0.22);
+  background: rgba(0, 164, 239, 0.07);
+}
+
+.acct-mgr-login-title {
+  font-size: 0.82rem;
+  font-weight: 800;
+  color: var(--copy);
+}
+
+.acct-mgr-login-desc {
+  font-size: 0.75rem;
+  color: var(--copy-muted);
+  line-height: 1.45;
+}
+
+.acct-mgr-login-hint {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(220, 65, 65, 0.28);
+  background: rgba(220, 65, 65, 0.08);
+  color: var(--danger);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.acct-mgr-btn-ms {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 20px;
+  border-radius: var(--radius);
+  border: 1.5px solid var(--line-strong);
+  background: var(--surface-1);
+  color: var(--copy);
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 140ms, border-color 140ms, box-shadow 140ms, transform 140ms var(--ease);
+}
+
+.acct-mgr-btn-ms:not(:disabled):hover {
+  background: var(--surface-3);
+  border-color: var(--accent-mid);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+
+.acct-mgr-btn-ms:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.acct-login-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(20, 24, 28, 0.38);
+  backdrop-filter: blur(5px);
+}
+
+.acct-login-dialog {
+  width: min(380px, 100%);
+  padding: 22px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--line-strong);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-lg);
+  display: grid;
+  gap: 10px;
+  text-align: center;
+}
+
+.acct-login-orb {
+  width: 52px;
+  height: 52px;
+  margin: 0 auto 4px;
+  border-radius: 18px;
+  display: grid;
+  place-items: center;
+  background: var(--surface-3);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-sm);
+}
+
+.acct-login-kicker {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--copy-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.acct-login-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--copy);
+  font-family: var(--display);
+}
+
+.acct-login-detail {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.55;
+  color: var(--copy-dim);
+}
+
+.acct-login-progress {
+  height: 8px;
+  margin-top: 4px;
+  border-radius: 999px;
+  background: var(--surface-4);
+  overflow: hidden;
+}
+
+.acct-login-progress-bar {
+  height: 100%;
+  width: 36%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #f25022 0%, #7fba00 34%, #00a4ef 67%, #ffb900 100%);
+  animation: acct-login-indeterminate 1.35s ease-in-out infinite;
+  transition: width 200ms var(--ease);
+}
+
+.acct-login-progress-bar.is-det {
+  animation: none;
+}
+
+@keyframes acct-login-indeterminate {
+  0% { transform: translateX(-115%); }
+  100% { transform: translateX(320%); }
+}
+
+.acct-login-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 0.72rem;
+  color: var(--copy-muted);
+}
+
+.acct-login-meta span:first-child {
+  font-weight: 800;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
