@@ -2,11 +2,13 @@
 
 .acct-mgr-row {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 12px;
+  gap: 6px;
   width: 100%;
-  text-align: left;
-  padding: 10px 12px;
+  min-height: 190px;
+  text-align: center;
+  padding: 14px 10px 12px;
   border-radius: 14px;
   border: 1px solid var(--line);
   background:
@@ -62,8 +64,8 @@
 
 .acct-mgr-avatar {
   flex-shrink: 0;
-  width: 46px;
-  height: 46px;
+  width: 64px;
+  height: 64px;
   border-radius: 50%;
   background: var(--surface-3);
   border: 2px solid var(--line);
@@ -103,42 +105,42 @@
 }
 
 .acct-mgr-row-body {
-  flex: 1 1 0;
+  width: 100%;
   min-width: 0;
   display: grid;
-  gap: 1px;
+  gap: 2px;
+  justify-items: center;
 }
 
 .acct-mgr-row-name {
-  font-size: 1rem;
+  font-size: 0.88rem;
   font-weight: 850;
   color: var(--copy);
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  white-space: nowrap;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 4px;
 }
 
 .acct-mgr-java-badge {
-  font-size: 0.6rem;
+  display: inline-block;
+  font-size: 0.62rem;
   font-weight: 700;
-  padding: 1px 6px;
+  padding: 2px 8px;
   border-radius: 999px;
   background: var(--accent);
   color: #fff;
   white-space: nowrap;
-  flex-shrink: 0;
   letter-spacing: 0.02em;
 }
 
 .acct-mgr-row-sub {
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   color: var(--copy-dim);
-  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 .acct-mgr-row-sub.is-verified {
@@ -150,6 +152,7 @@
   display: flex;
   gap: 5px;
   flex-wrap: wrap;
+  justify-content: center;
   margin-top: 2px;
 }
 
@@ -182,16 +185,30 @@
 }
 
 .acct-mgr-row-status {
-  flex-shrink: 0;
+  width: 100%;
   font-size: 0.78rem;
   font-weight: 600;
   white-space: nowrap;
 }
 
 .acct-mgr-row-status-actions {
-  display: grid;
-  gap: 6px;
-  justify-items: end;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  align-items: center;
+  width: 100%;
+}
+
+/* カードグリッド用アクションエリア */
+.acct-mgr-row-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  align-items: stretch;
+  width: 100%;
+  margin-top: auto;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
 }
 
 .acct-mgr-status-active {
@@ -211,6 +228,7 @@
 
 .acct-mgr-status-switch-btn {
   padding: 7px 12px;
+  width: 100%;
   border-radius: 999px;
   border: 1px solid var(--accent-mid);
   background: var(--accent-soft);
@@ -234,6 +252,7 @@
 
 .acct-mgr-status-logout-btn {
   padding: 4px 9px;
+  width: 100%;
   border-radius: var(--radius-sm);
   border: 1px solid rgba(220, 65, 65, 0.35);
   background: rgba(220, 65, 65, 0.08);
@@ -250,7 +269,9 @@
 .acct-mgr-row-private {
   display: flex;
   align-items: center;
+  justify-content: center;
   min-width: 0;
+  max-width: 100%;
 }
 
 .acct-mgr-mask-btn {

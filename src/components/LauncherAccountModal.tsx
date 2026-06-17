@@ -221,22 +221,6 @@ type AccountRowProps = {
   onLogout?: () => void;
 };
 
-function MaskText({ text, label }: { text: string; label: string }) {
-  const [revealed, setRevealed] = useState(false);
-  return (
-    <button
-      type="button"
-      className={`acct-mgr-mask-btn ${revealed ? "is-revealed" : ""}`}
-      onClick={(e) => { e.stopPropagation(); setRevealed((v) => !v); }}
-      title={revealed ? "隠す" : `${label}を表示`}
-      aria-label={revealed ? `${label}を隠す` : `${label}を表示`}
-    >
-      <span className="acct-mgr-mask-text">{text}</span>
-      <span className="acct-mgr-mask-toggle">{revealed ? "隠す" : "表示"}</span>
-    </button>
-  );
-}
-
 function AccountAvatar({ account, className = "acct-mgr-avatar" }: { account: LauncherAccountEntry | null; className?: string }) {
   const [avatarUrl, setAvatarUrl] = useState<string | null>(() => account ? resolveCachedXboxAvatarUrl(account) : null);
   const [avatarFailed, setAvatarFailed] = useState(false);
@@ -328,66 +312,42 @@ function AccountRow({ account, selected, switching, sourceLabel, sourceClass, ca
         <AccountAvatar account={account} />
       </button>
 
-      {/* メイン情報（クリック非依存） */}
-      <span className="acct-mgr-row-body">
-        <span className="acct-mgr-row-name">
-          {account.username}
-          {account.hasJavaAccess && (
-            <span className="acct-mgr-java-badge" title="Java Edition 所有確認済み">✓ Java</span>
-          )}
-        </span>
+      {/* ユーザー名 */}
+      <span className="acct-mgr-row-name">{account.username}</span>
 
-        {/* Microsoft メール・ID は保護表示 */}
-        {account.microsoftUsername ? (
-          <span className="acct-mgr-row-private">
-            <MaskText text={account.microsoftUsername} label="Microsoft アカウント" />
-          </span>
-        ) : account.authSource === "microsoft-oauth" ? (
-          <span className="acct-mgr-row-sub is-verified">Microsoft OAuth 認証済み</span>
+      {/* Java 所有バッジ */}
+      {account.hasJavaAccess && (
+        <span className="acct-mgr-java-badge" title="Java Edition 所有確認済み">✓ Java</span>
+      )}
+
+      {/* ソースタグ */}
+      <span className={`acct-mgr-tag ${sourceClass}`}>{sourceLabel}</span>
+
+      {/* アクションエリア */}
+      <span className="acct-mgr-row-actions">
+        {selected ? (
+          <span className="acct-mgr-status-active">使用中</span>
+        ) : switching ? (
+          <span className="acct-mgr-status-switching">切替中…</span>
         ) : (
-          <span className="acct-mgr-row-sub">Microsoft アカウント未取得</span>
+          <button
+            type="button"
+            className="acct-mgr-status-switch-btn"
+            onClick={onSelect}
+            disabled={!canSelect}
+          >
+            {sourceClass === "tag-pc" ? "取り込む" : "切替"}
+          </button>
         )}
-
-        {account.gamerTag ? (
-          <span className="acct-mgr-row-private">
-            <MaskText text={account.gamerTag} label="ゲーマータグ" />
-          </span>
-        ) : null}
-
-        <span className="acct-mgr-row-tags">
-          <span className={`acct-mgr-tag ${sourceClass}`}>
-            {sourceLabel}
-          </span>
-        </span>
-      </span>
-
-      {/* 右側ステータス（切替ボタン兼用） */}
-      <span className="acct-mgr-row-status">
-        <span className="acct-mgr-row-status-actions">
-          {selected ? (
-            <span className="acct-mgr-status-active">使用中</span>
-          ) : switching ? (
-            <span className="acct-mgr-status-switching">切替中…</span>
-          ) : (
-            <button
-              type="button"
-              className="acct-mgr-status-switch-btn"
-              onClick={onSelect}
-              disabled={!canSelect}
-            >
-              {sourceClass === "tag-pc" ? "取り込む" : "切替"}
-            </button>
-          )}
-          {canLogout && onLogout && (
-            <button
-              type="button"
-              className="acct-mgr-status-logout-btn"
-              onClick={(event) => { event.stopPropagation(); onLogout(); }}
-            >
-              ログアウト
-            </button>
-          )}
-        </span>
+        {canLogout && onLogout && (
+          <button
+            type="button"
+            className="acct-mgr-status-logout-btn"
+            onClick={(event) => { event.stopPropagation(); onLogout(); }}
+          >
+            ログアウト
+          </button>
+        )}
       </span>
     </div>
   );

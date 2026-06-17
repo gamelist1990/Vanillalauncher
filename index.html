@@ -2,12 +2,296 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tauri + React + Typescript</title>
+    <meta name="theme-color" content="#f7f8f3" />
+    <title>VanillaLauncher</title>
+    <style>
+      :root { color-scheme: light; }
+      html, body, #root { min-height: 100%; margin: 0; }
+      body {
+        min-height: 100vh;
+        background: #f7f8f3;
+        color: #1f2a1f;
+        font-family: Inter, "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      }
+      #boot-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483647;
+        display: block;
+        padding: 0;
+        background: #f7f8f3;
+        transition: opacity 180ms ease, visibility 180ms ease;
+      }
+      #boot-splash.is-hiding {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+      .boot-app-shell {
+        display: grid;
+        grid-template-columns: 220px minmax(0, 1fr);
+        min-height: 100vh;
+        background: #f7f8f3;
+      }
+      .boot-sidebar {
+        height: 100vh;
+        padding: 16px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        background: #ffffff;
+        border-right: 1px solid rgba(91,111,84,0.22);
+      }
+      .boot-brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 8px 16px;
+        margin-bottom: 8px;
+        border-bottom: 1px solid rgba(91,111,84,0.22);
+      }
+      .boot-brand-mark {
+        width: 36px;
+        height: 36px;
+        border-radius: 11px;
+        background: linear-gradient(135deg, #3b8526, #7fb46f);
+        box-shadow: 0 0 18px rgba(59,133,38,0.18);
+      }
+      .boot-nav {
+        display: grid;
+        gap: 4px;
+      }
+      .boot-nav-item {
+        min-height: 52px;
+        padding: 10px 12px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        border-radius: 14px;
+        border: 1px solid transparent;
+        background: transparent;
+      }
+      .boot-nav-item.is-active {
+        border-color: rgba(59,133,38,0.30);
+        background: rgba(59,133,38,0.12);
+      }
+      .boot-nav-icon {
+        width: 32px;
+        height: 32px;
+        flex: 0 0 auto;
+        border-radius: 10px;
+        background: #e6eadf;
+      }
+      .boot-sidebar-panel {
+        margin-top: auto;
+        padding: 14px 16px;
+        border-radius: 14px;
+        border: 1px solid rgba(91,111,84,0.22);
+        background: #f2f4ee;
+      }
+      .boot-main {
+        min-width: 0;
+        min-height: 100vh;
+        padding: 24px 28px 32px;
+        display: grid;
+        align-content: start;
+        gap: 20px;
+        background: #f7f8f3;
+      }
+      .boot-header {
+        min-height: 64px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      .boot-header-left,
+      .boot-header-right {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .boot-hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
+        gap: 16px;
+        min-height: min(300px, 50vh);
+        padding: 24px;
+        border-radius: 20px;
+        border: 1px solid rgba(91,111,84,0.22);
+        background:
+          linear-gradient(135deg, #f2f4ee 0%, rgba(255,255,255,0.98) 100%),
+          radial-gradient(circle at 22% 16%, rgba(59,133,38,0.10), transparent 34%);
+        overflow: hidden;
+      }
+      .boot-hero-copy,
+      .boot-hero-summary,
+      .boot-workspace,
+      .boot-card-grid,
+      .boot-card {
+        display: grid;
+        gap: 12px;
+        min-width: 0;
+      }
+      .boot-hero-summary article,
+      .boot-panel,
+      .boot-card {
+        border: 1px solid rgba(91,111,84,0.22);
+        border-radius: 16px;
+        background: rgba(255,255,255,0.98);
+      }
+      .boot-hero-summary article {
+        min-height: 72px;
+        padding: 12px 14px;
+      }
+      .boot-card-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px;
+      }
+      .boot-card {
+        min-height: 118px;
+        padding: 16px;
+      }
+      .boot-panel {
+        min-height: 160px;
+        padding: 18px;
+      }
+      .boot-line,
+      .boot-pill,
+      .boot-box,
+      .boot-avatar,
+      .boot-button {
+        position: relative;
+        overflow: hidden;
+        border-radius: 999px;
+        background: rgba(91,111,84,0.14);
+      }
+      .boot-line { height: 12px; width: 78%; }
+      .boot-line.xs { width: 34%; }
+      .boot-line.sm { width: 48%; }
+      .boot-line.lg { width: 88%; }
+      .boot-title-line { height: 34px; width: min(460px, 72%); border-radius: 14px; }
+      .boot-pill { height: 24px; width: 104px; }
+      .boot-button { height: 44px; width: 142px; border-radius: 14px; }
+      .boot-box { height: 42px; border-radius: 14px; }
+      .boot-avatar { width: 40px; height: 40px; flex: 0 0 auto; border-radius: 10px; }
+      .boot-action-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+      .boot-account-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+      .boot-line::after,
+      .boot-pill::after,
+      .boot-box::after,
+      .boot-avatar::after,
+      .boot-button::after,
+      .boot-brand-mark::after,
+      .boot-nav-icon::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        transform: translateX(-100%);
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.72), transparent);
+        animation: boot-shimmer 1.35s ease-in-out infinite;
+      }
+      .boot-brand-mark,
+      .boot-nav-icon { position: relative; overflow: hidden; }
+      @keyframes boot-shimmer { 100% { transform: translateX(100%); } }
+      @media (max-width: 900px) {
+        .boot-app-shell { grid-template-columns: minmax(0, 1fr); }
+        .boot-sidebar { display: none; }
+        .boot-main { padding: 16px; }
+        .boot-hero { grid-template-columns: 1fr; min-height: 260px; }
+        .boot-card-grid { grid-template-columns: 1fr; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #boot-splash { transition: none; }
+        .boot-line::after,
+        .boot-pill::after,
+        .boot-box::after,
+        .boot-avatar::after,
+        .boot-button::after,
+        .boot-brand-mark::after,
+        .boot-nav-icon::after { animation: none; }
+      }
+    </style>
   </head>
 
   <body>
+    <div id="boot-splash" aria-label="VanillaLauncher を読み込み中">
+      <div class="boot-app-shell">
+        <aside class="boot-sidebar" aria-hidden="true">
+          <div class="boot-brand">
+            <div class="boot-brand-mark"></div>
+            <div style="display:grid; gap:6px; min-width:0; flex:1;">
+              <div class="boot-line sm"></div>
+              <div class="boot-line xs"></div>
+            </div>
+          </div>
+          <nav class="boot-nav">
+            <div class="boot-nav-item is-active"><div class="boot-nav-icon"></div><div class="boot-line sm"></div></div>
+            <div class="boot-nav-item"><div class="boot-nav-icon"></div><div class="boot-line sm"></div></div>
+            <div class="boot-nav-item"><div class="boot-nav-icon"></div><div class="boot-line sm"></div></div>
+            <div class="boot-nav-item"><div class="boot-nav-icon"></div><div class="boot-line sm"></div></div>
+            <div class="boot-nav-item"><div class="boot-nav-icon"></div><div class="boot-line sm"></div></div>
+          </nav>
+          <div class="boot-sidebar-panel">
+            <div class="boot-line lg"></div>
+            <div class="boot-line sm" style="margin-top:10px;"></div>
+          </div>
+        </aside>
+
+        <main class="boot-main">
+          <header class="boot-header" aria-hidden="true">
+            <div class="boot-header-left">
+              <div class="boot-line boot-title-line" style="width:220px;"></div>
+            </div>
+            <div class="boot-header-right">
+              <div class="boot-box" style="width:180px;"></div>
+              <div class="boot-avatar"></div>
+            </div>
+          </header>
+
+          <section class="boot-hero" aria-hidden="true">
+            <div class="boot-hero-copy">
+              <div class="boot-pill"></div>
+              <div class="boot-line boot-title-line"></div>
+              <div class="boot-line lg"></div>
+              <div class="boot-line sm"></div>
+              <div class="boot-action-row">
+                <div class="boot-button"></div>
+                <div class="boot-button" style="width:118px;"></div>
+                <div class="boot-button" style="width:118px;"></div>
+              </div>
+              <div class="boot-account-row">
+                <div class="boot-avatar"></div>
+                <div style="display:grid; gap:7px; flex:1; min-width:0;">
+                  <div class="boot-line sm"></div>
+                  <div class="boot-line lg"></div>
+                </div>
+              </div>
+            </div>
+            <div class="boot-hero-summary">
+              <article><div class="boot-line xs"></div><div class="boot-line sm" style="margin-top:12px;"></div></article>
+              <article><div class="boot-line xs"></div><div class="boot-line sm" style="margin-top:12px;"></div></article>
+              <article><div class="boot-line xs"></div><div class="boot-line lg" style="margin-top:12px;"></div></article>
+            </div>
+          </section>
+
+          <section class="boot-workspace" aria-hidden="true">
+            <div class="boot-card-grid">
+              <div class="boot-card"><div class="boot-line sm"></div><div class="boot-line lg"></div><div class="boot-line sm"></div></div>
+              <div class="boot-card"><div class="boot-line sm"></div><div class="boot-line lg"></div><div class="boot-line sm"></div></div>
+              <div class="boot-card"><div class="boot-line sm"></div><div class="boot-line lg"></div><div class="boot-line sm"></div></div>
+            </div>
+            <div class="boot-panel">
+              <div class="boot-line sm"></div>
+              <div class="boot-line lg" style="margin-top:16px;"></div>
+              <div class="boot-line lg"></div>
+              <div class="boot-line sm"></div>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
