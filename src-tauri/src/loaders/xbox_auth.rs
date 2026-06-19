@@ -1,4 +1,4 @@
-use crate::{app_log, models::XboxRpsStateResult, progress::emit_progress};
+use crate::{app_log, models::XboxRpsStateResult, progress::emit_progress, settings};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -13,6 +13,9 @@ use std::{
 };
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tokio::sync::Mutex;
+
+const FAILED_RPS_ATTEMPT_CACHE_KEY: &str = "xbox-rps-failed-attempts-v1";
+const FAILED_RPS_ATTEMPT_CACHE_TTL_SECONDS: i64 = 60 * 60 * 24;
 
 use super::MOJANG_USER_AGENT;
 
@@ -45,6 +48,23 @@ struct TokenbrokerFieldMatch {
     pattern: String,
     value: String,
     gap: Option<usize>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FailedRpsAttemptCache {
+    #[serde(default)]
+    entries: HashMap<String, FailedRpsAttemptCacheEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FailedRpsAttemptCacheEntry {
+    failed_at: String,
+    source_path: String,
+    variant_label: String,
+    reason: String,
+    account_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -291,11 +311,10 @@ pub(super) async fn read_cached_xbox_launcher_accounts(
 
     let java_access_hints = read_local_launcher_java_access_hints();
     let cached_tokens = read_cached_xbox_identity_tokens()?;
-    let max_attempts = cached_tokens.len().clamp(12, 48);
-    let attempts = build_prioritized_rps_attempts(&cached_tokens, max_attempts);
     let mut discovered = discovered;
     let mut discovered_indices_by_source = HashMap::<PathBuf, Vec<usize>>::new();
     let mut resolved_sources = HashSet::<PathBuf>::new();
+    let mut verified_indices = HashSet::<usize>::new();
 
     for (index, (source_path, _account)) in discovered.iter().enumerate() {
         discovered_indices_by_source
@@ -307,117 +326,229 @@ pub(super) async fn read_cached_xbox_launcher_accounts(
     app_log::append_log(
         "INFO",
         format!(
-            "resolving cached xbox accounts online discovered_sources={} token_attempts={}",
+            "resolving cached xbox accounts online discovered_sources={} token_candidates={}",
             discovered_indices_by_source.len(),
-            attempts.len()
+            cached_tokens.len()
         ),
     );
     emit_scan_progress(
         format!(
-            "オンライン照合を開始します。{} 件の候補ソースに対して最大 {} 通りの認証パターンを試します。",
+            "オンライン照合を開始します。{} 件の候補ソースを必要最小限の認証パターンで確認します。Token 候補: {} 件。",
             discovered_indices_by_source.len(),
-            attempts.len()
+            cached_tokens.len()
         ),
         42.0,
     );
 
-    let total_attempts = attempts.len().max(1);
-    for (attempt_index, (label, candidate, token)) in attempts.into_iter().enumerate() {
-        let Some(indices) = discovered_indices_by_source
-            .get(&token.source_path)
-            .cloned()
-        else {
+    let source_entries = discovered_indices_by_source
+        .iter()
+        .map(|(source_path, indices)| (source_path.clone(), indices.clone()))
+        .collect::<Vec<_>>();
+    let total_sources = source_entries.len().max(1);
+    for (source_index, (source_path, indices)) in source_entries.into_iter().enumerate() {
+        if resolved_sources.contains(&source_path) {
             continue;
-        };
-        if resolved_sources.contains(&token.source_path) {
+        }
+        let representative_account = indices
+            .first()
+            .and_then(|index| discovered.get(*index))
+            .map(|(_source_path, account)| account.clone());
+        let source_tokens = cached_tokens
+            .iter()
+            .filter(|token| token.source_path == source_path)
+            .cloned()
+            .collect::<Vec<_>>();
+        if source_tokens.is_empty() {
+            app_log::append_log(
+                "WARN",
+                format!(
+                    "no token candidates for cached xbox account source={}",
+                    source_path.display()
+                ),
+            );
             continue;
         }
 
-        let source_name = token
-            .source_path
+        let attempts = build_prioritized_rps_attempts_for_account(
+            &source_tokens,
+            4,
+            representative_account.as_ref(),
+        );
+        if attempts.is_empty() {
+            app_log::append_log(
+                "INFO",
+                format!(
+                    "all token variants skipped for cached xbox account source={} by failed-attempt cache",
+                    source_path.display()
+                ),
+            );
+            continue;
+        }
+
+        let source_name = source_path
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("cache.tbres");
-        let percent = 42.0 + ((attempt_index as f64 / total_attempts as f64) * 46.0);
+        let percent = 42.0 + ((source_index as f64 / total_sources as f64) * 46.0);
         emit_scan_progress(
             format!(
-                "オンライン照合 {}/{}: {} を {} で確認しています。",
-                attempt_index + 1,
-                total_attempts,
+                "オンライン照合 {}/{}: {} を確認しています。最大 {} 通りまで試します。",
+                source_index + 1,
+                total_sources,
                 source_name,
-                label
+                attempts.len()
             ),
             percent,
         );
 
-        let context = format!(
-            "scan_cached_xbox_account:{}:{}",
-            token.source_path.display(),
-            label
-        );
-        let Some(exchange) = exchange_rps_ticket_for_minecraft_auth(&candidate, &context).await
-        else {
-            continue;
-        };
-        for index in &indices {
-            let (_, account) = &mut discovered[*index];
-            merge_xbox_identity_into_launcher_account(account, exchange.xbox_identity.as_ref());
-        }
-        let Some(access_token) = exchange.minecraft_access_token else {
-            if exchange.xbox_identity.is_some() {
+        for (label, candidate, token) in attempts {
+            let context = format!(
+                "scan_cached_xbox_account:{}:{}",
+                token.source_path.display(),
+                label
+            );
+            let Some(exchange) = exchange_rps_ticket_for_minecraft_auth(&candidate, &context).await
+            else {
+                mark_rps_attempt_failed(
+                    &candidate,
+                    &token,
+                    &label,
+                    representative_account.as_ref(),
+                    "xbox-rps-exchange-failed",
+                );
+                continue;
+            };
+            let Some(access_token) = exchange.minecraft_access_token else {
+                mark_rps_attempt_failed(
+                    &candidate,
+                    &token,
+                    &label,
+                    representative_account.as_ref(),
+                    "minecraft-access-token-missing",
+                );
+                continue;
+            };
+            let Some((verified_profile, matched_account, used_fallback)) =
+                resolve_verified_minecraft_profile_with_xbox_identity(
+                    &access_token,
+                    &format!("{context} -> minecraft/profile"),
+                    launcher_accounts,
+                    &java_access_hints,
+                    exchange.xbox_identity.as_ref(),
+                )
+                .await
+            else {
+                mark_rps_attempt_failed(
+                    &candidate,
+                    &token,
+                    &label,
+                    representative_account.as_ref(),
+                    "minecraft-java-access-not-verified",
+                );
+                continue;
+            };
+            if used_fallback {
                 app_log::append_log(
-                    "INFO",
+                    "WARN",
                     format!(
-                        "resolved cached xbox account source={} with Xbox profile only",
+                        "cached xbox account source={} only matched local entitlement hint; excluding from PC scan result",
                         token.source_path.display()
                     ),
                 );
+                mark_rps_attempt_failed(
+                    &candidate,
+                    &token,
+                    &label,
+                    representative_account.as_ref(),
+                    "minecraft-java-access-only-local-hint",
+                );
+                continue;
             }
-            continue;
-        };
-        let Some((verified_profile, matched_account, used_fallback)) =
-            resolve_verified_minecraft_profile_with_xbox_identity(
-                &access_token,
-                &format!("{context} -> minecraft/profile"),
-                launcher_accounts,
-                &java_access_hints,
-                exchange.xbox_identity.as_ref(),
-            )
-            .await
-        else {
-            continue;
-        };
 
-        for index in indices {
-            let (_, account) = &mut discovered[index];
-            merge_verified_identity_into_launcher_account(
-                account,
-                &verified_profile,
-                matched_account.as_ref(),
+            for index in &indices {
+                let (_, account) = &mut discovered[*index];
+                merge_xbox_identity_into_launcher_account(account, exchange.xbox_identity.as_ref());
+                merge_verified_identity_into_launcher_account(
+                    account,
+                    &verified_profile,
+                    matched_account.as_ref(),
+                );
+
+                if account
+                    .local_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .is_none()
+                {
+                    account.local_id = account
+                        .xuid
+                        .clone()
+                        .or_else(|| Some(normalize_uuid_value(&verified_profile.0)));
+                }
+                if account
+                    .user_properties
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .is_none()
+                {
+                    account.user_properties = Some("{}".to_string());
+                }
+
+                let access_token_expires_at = access_token_expiry_rfc3339(&access_token);
+                let secure_token = SecureLaunchToken {
+                    access_token: access_token.clone(),
+                    expires_at: access_token_expires_at.clone(),
+                    username: verified_profile.1.clone(),
+                    uuid: normalize_uuid_value(&verified_profile.0),
+                    xuid: account.xuid.clone().unwrap_or_default(),
+                    user_properties: account
+                        .user_properties
+                        .clone()
+                        .unwrap_or_else(|| "{}".to_string()),
+                    user_type: "msa".to_string(),
+                };
+                if let Err(error) = persist_secure_launch_token(Some(&*account), &secure_token) {
+                    app_log::append_log(
+                        "WARN",
+                        format!(
+                            "failed to persist secure token for verified PC account source={}: {error}",
+                            token.source_path.display()
+                        ),
+                    );
+                }
+
+                account.access_token = None;
+                account.access_token_expires_at = access_token_expires_at;
+                account.auth_source = Some("microsoft-oauth".to_string());
+                account.xbox_profile_verified = true;
+                verified_indices.insert(*index);
+            }
+
+            let matched_local_id = matched_account
+                .as_ref()
+                .and_then(|account| account.local_id.as_deref())
+                .unwrap_or("none");
+            app_log::append_log(
+                "INFO",
+                format!(
+                    "verified cached xbox account source={} profile={} matched_local_id={}",
+                    token.source_path.display(),
+                    verified_profile.0,
+                    matched_local_id
+                ),
             );
+            resolved_sources.insert(token.source_path.clone());
+            break;
         }
-
-        let matched_local_id = matched_account
-            .as_ref()
-            .and_then(|account| account.local_id.as_deref())
-            .unwrap_or("none");
-        app_log::append_log(
-            "INFO",
-            format!(
-                "resolved cached xbox account source={} profile={} matched_local_id={} fallback={}",
-                token.source_path.display(),
-                verified_profile.0,
-                matched_local_id,
-                used_fallback
-            ),
-        );
-        resolved_sources.insert(token.source_path.clone());
     }
 
     let collapsed = collapse_cached_xbox_launcher_accounts(
         discovered
             .into_iter()
-            .map(|(_source_path, account)| account)
+            .enumerate()
+            .filter_map(|(index, (_source_path, account))| verified_indices.contains(&index).then_some(account))
             .collect(),
     );
     app_log::append_log(
@@ -519,13 +650,6 @@ fn merge_launcher_account_for_scan(
     crate::minecraft::merge_launcher_account_fields(target, source);
 }
 
-pub(super) fn build_prioritized_rps_attempts(
-    cached_tokens: &[CachedXboxToken],
-    max_attempts: usize,
-) -> Vec<(String, String, CachedXboxToken)> {
-    build_prioritized_rps_attempts_for_account(cached_tokens, max_attempts, None)
-}
-
 pub(super) fn build_prioritized_rps_attempts_for_account(
     cached_tokens: &[CachedXboxToken],
     max_attempts: usize,
@@ -534,6 +658,13 @@ pub(super) fn build_prioritized_rps_attempts_for_account(
     let mut attempts: Vec<(i32, String, String, CachedXboxToken)> = Vec::new();
     let mut seen = HashSet::new();
     let preferred_source_scores = preferred_cached_xbox_source_scores(preferred_account);
+    let failed_attempt_cache = load_failed_rps_attempt_cache().unwrap_or_else(|error| {
+        app_log::append_log(
+            "WARN",
+            format!("failed to load xbox-rps failed attempt cache: {error}"),
+        );
+        FailedRpsAttemptCache::default()
+    });
 
     for token in cached_tokens {
         for (label, candidate) in build_xbox_token_variants(&token.token) {
@@ -553,13 +684,142 @@ pub(super) fn build_prioritized_rps_attempts_for_account(
     }
 
     attempts.sort_by(|left, right| right.0.cmp(&left.0));
-    let bounded = attempts
+    let before_filter = attempts.len();
+    let bounded: Vec<(String, String, CachedXboxToken)> = attempts
         .into_iter()
+        .filter(|(_score, label, candidate, token)| {
+            !is_rps_attempt_marked_failed(
+                &failed_attempt_cache,
+                candidate,
+                token,
+                label,
+                preferred_account,
+            )
+        })
         .take(max_attempts)
         .map(|(_score, label, candidate, token)| (label, candidate, token))
         .collect();
 
+    let skipped = before_filter.saturating_sub(max_attempts.min(before_filter));
+    let failed_skipped = before_filter.saturating_sub(skipped + bounded.len());
+    if failed_skipped > 0 {
+        app_log::append_log(
+            "INFO",
+            format!("skipped {failed_skipped} recently failed xbox-rps attempts from temp cache"),
+        );
+    }
+
     bounded
+}
+
+fn load_failed_rps_attempt_cache() -> Result<FailedRpsAttemptCache, String> {
+    let raw = settings::read_temp_cache_json(FAILED_RPS_ATTEMPT_CACHE_KEY.to_string())?;
+    let Some(raw) = raw else {
+        return Ok(FailedRpsAttemptCache::default());
+    };
+
+    let mut cache = serde_json::from_str::<FailedRpsAttemptCache>(&raw).unwrap_or_default();
+    prune_failed_rps_attempt_cache(&mut cache);
+    Ok(cache)
+}
+
+fn save_failed_rps_attempt_cache(cache: &FailedRpsAttemptCache) -> Result<(), String> {
+    let text = serde_json::to_string(cache)
+        .map_err(|error| format!("Xbox RPS 失敗キャッシュを JSON 化できませんでした: {error}"))?;
+    settings::write_temp_cache_json(FAILED_RPS_ATTEMPT_CACHE_KEY.to_string(), text)?;
+    Ok(())
+}
+
+fn prune_failed_rps_attempt_cache(cache: &mut FailedRpsAttemptCache) {
+    let now = chrono::Utc::now();
+    cache.entries.retain(|_, entry| {
+        chrono::DateTime::parse_from_rfc3339(&entry.failed_at)
+            .map(|failed_at| {
+                now.signed_duration_since(failed_at.with_timezone(&chrono::Utc)).num_seconds()
+                    < FAILED_RPS_ATTEMPT_CACHE_TTL_SECONDS
+            })
+            .unwrap_or(false)
+    });
+}
+
+fn stable_rps_attempt_fingerprint(candidate: &str, token: &CachedXboxToken, variant_label: &str) -> String {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in token.source_path.to_string_lossy().bytes()
+        .chain([0xff])
+        .chain(variant_label.bytes())
+        .chain([0xfe])
+        .chain(candidate.bytes())
+    {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
+}
+
+fn rps_attempt_account_key(account: Option<&crate::minecraft::LauncherAccount>) -> Option<String> {
+    let account = account?;
+    [
+        account.local_id.as_deref(),
+        account.xuid.as_deref(),
+        account.profile_id.as_deref(),
+        account.username.as_deref(),
+        account.gamer_tag.as_deref(),
+    ]
+    .into_iter()
+    .find_map(normalize_account_identity_value)
+}
+
+fn failed_rps_attempt_cache_key(
+    candidate: &str,
+    token: &CachedXboxToken,
+    variant_label: &str,
+    preferred_account: Option<&crate::minecraft::LauncherAccount>,
+) -> String {
+    format!(
+        "{}:{}",
+        rps_attempt_account_key(preferred_account).unwrap_or_else(|| "global".to_string()),
+        stable_rps_attempt_fingerprint(candidate, token, variant_label),
+    )
+}
+
+fn is_rps_attempt_marked_failed(
+    cache: &FailedRpsAttemptCache,
+    candidate: &str,
+    token: &CachedXboxToken,
+    variant_label: &str,
+    preferred_account: Option<&crate::minecraft::LauncherAccount>,
+) -> bool {
+    let key = failed_rps_attempt_cache_key(candidate, token, variant_label, preferred_account);
+    cache.entries.contains_key(&key)
+}
+
+pub(super) fn mark_rps_attempt_failed(
+    candidate: &str,
+    token: &CachedXboxToken,
+    variant_label: &str,
+    preferred_account: Option<&crate::minecraft::LauncherAccount>,
+    reason: &str,
+) {
+    let key = failed_rps_attempt_cache_key(candidate, token, variant_label, preferred_account);
+    let mut cache = load_failed_rps_attempt_cache().unwrap_or_default();
+    cache.entries.insert(
+        key,
+        FailedRpsAttemptCacheEntry {
+            failed_at: chrono::Utc::now().to_rfc3339(),
+            source_path: token.source_path.display().to_string(),
+            variant_label: variant_label.to_string(),
+            reason: reason.to_string(),
+            account_key: rps_attempt_account_key(preferred_account),
+        },
+    );
+    prune_failed_rps_attempt_cache(&mut cache);
+
+    if let Err(error) = save_failed_rps_attempt_cache(&cache) {
+        app_log::append_log(
+            "WARN",
+            format!("failed to persist xbox-rps failed attempt cache: {error}"),
+        );
+    }
 }
 
 fn preferred_cached_xbox_source_scores(
@@ -840,6 +1100,40 @@ pub(super) async fn ensure_xbox_rps_state(
         }
     };
 
+    let preferred_account = match crate::minecraft::read_active_launcher_account() {
+        Ok(account) => account,
+        Err(error) => {
+            app_log::append_log(
+                "WARN",
+                format!(
+                    "failed to read active launcher account while probing xbox-rps state: {error}"
+                ),
+            );
+            None
+        }
+    };
+    let java_access_hints = read_local_launcher_java_access_hints();
+
+    if preferred_account
+        .as_ref()
+        .is_some_and(|account| {
+            account.auth_source.as_deref() == Some("microsoft-oauth")
+                && launcher_account_has_java_access_hint(account, &java_access_hints)
+        })
+    {
+        return Ok(XboxRpsStateResult {
+            message: "Microsoft OAuth ログイン済みアカウントを使用するため、Xbox RPS 候補の取得検知は不要です。".to_string(),
+            state_path: state_path.clone(),
+            used_saved_state,
+            refreshed: false,
+            succeeded: true,
+            attempts_tried: 0,
+            total_attempts: 0,
+            source_path: None,
+            variant_label: None,
+        });
+    }
+
     let cached_tokens = read_cached_xbox_identity_tokens()?;
     if cached_tokens.is_empty() {
         emit_auth_progress(
@@ -859,19 +1153,6 @@ pub(super) async fn ensure_xbox_rps_state(
             variant_label: None,
         });
     }
-
-    let preferred_account = match crate::minecraft::read_active_launcher_account() {
-        Ok(account) => account,
-        Err(error) => {
-            app_log::append_log(
-                "WARN",
-                format!(
-                    "failed to read active launcher account while probing xbox-rps state: {error}"
-                ),
-            );
-            None
-        }
-    };
     let bounded =
         build_prioritized_rps_attempts_for_account(&cached_tokens, 12, preferred_account.as_ref());
     let total_attempts = bounded.len();
@@ -905,7 +1186,6 @@ pub(super) async fn ensure_xbox_rps_state(
             Vec::new()
         }
     };
-    let java_access_hints = read_local_launcher_java_access_hints();
 
     emit_auth_progress(
         "Xbox 認証確認",
@@ -933,6 +1213,13 @@ pub(super) async fn ensure_xbox_rps_state(
 
         if let Some(exchange) = exchange_rps_ticket_for_minecraft_auth(&candidate, &context).await {
             let Some(access_token) = exchange.minecraft_access_token else {
+                mark_rps_attempt_failed(
+                    &candidate,
+                    &token,
+                    &label,
+                    preferred_account.as_ref(),
+                    "minecraft-access-token-missing",
+                );
                 continue;
             };
             let verification_context = format!("{context} -> minecraft/profile");
@@ -952,6 +1239,13 @@ pub(super) async fn ensure_xbox_rps_state(
                         "xbox-rps state candidate did not produce verified Minecraft Java access context={}",
                         context
                     ),
+                );
+                mark_rps_attempt_failed(
+                    &candidate,
+                    &token,
+                    &label,
+                    preferred_account.as_ref(),
+                    "minecraft-java-access-not-verified",
                 );
             } else {
                 let percent = (attempts_tried as f64 / total_attempts as f64) * 100.0;
@@ -986,7 +1280,13 @@ pub(super) async fn ensure_xbox_rps_state(
             percent,
         );
 
-        tokio::time::sleep(Duration::from_millis(700)).await;
+        mark_rps_attempt_failed(
+            &candidate,
+            &token,
+            &label,
+            preferred_account.as_ref(),
+            "xbox-rps-exchange-failed",
+        );
     }
 
     emit_auth_progress(

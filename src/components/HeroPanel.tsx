@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { formatLastUsed, formatLoader, heroSubtitle } from "../app/formatters";
 import type {
   ActiveLauncherAccount,
@@ -8,6 +9,17 @@ import type {
   ProgressState,
 } from "../app/types";
 import { LauncherAccountModal } from "./LauncherAccountModal";
+
+function resolveVisualImageSrc(value: string | null | undefined, fallback?: string) {
+  const source = value?.trim() || fallback;
+  if (!source) return undefined;
+
+  if (source.startsWith("/") || /^(https?:|data:|blob:|asset:|tauri:)/i.test(source)) {
+    return encodeURI(source);
+  }
+
+  return convertFileSrc(source);
+}
 
 type HeroPanelProps = {
   profile: LauncherProfile | null;
@@ -69,7 +81,7 @@ export function HeroPanel({
   onDeleteProfile,
 }: HeroPanelProps) {
   const [accountPanelOpen, setAccountPanelOpen] = useState(false);
-  const backgroundImage = encodeURI(profile?.backgroundImageUrl ?? "/launcher-hero.jpg");
+  const backgroundImage = resolveVisualImageSrc(profile?.backgroundImageUrl, "/launcher-hero.jpg");
   const resolvedActiveAccount = activeAccount
     ? launcherAccounts.find((account) => account.localId === activeAccount.localId) ??
       launcherAccounts.find((account) => account.isActive) ??

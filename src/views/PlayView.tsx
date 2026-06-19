@@ -1,5 +1,17 @@
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { formatLoader } from "../app/formatters";
 import type { LauncherProfile } from "../app/types";
+
+function resolveVisualImageSrc(value: string | null | undefined, fallback?: string) {
+  const source = value?.trim() || fallback;
+  if (!source) return undefined;
+
+  if (source.startsWith("/") || /^(https?:|data:|blob:|asset:|tauri:)/i.test(source)) {
+    return encodeURI(source);
+  }
+
+  return convertFileSrc(source);
+}
 
 function resolveLoaderIconPath(loader: string) {
   switch (loader.toLowerCase()) {
@@ -73,8 +85,8 @@ export function PlayView({
 
         <div className="play-profile-cards">
           {profiles.map((entry) => {
-            const background = encodeURI(entry.backgroundImageUrl ?? "/launcher-hero.jpg");
-            const icon = entry.customIconUrl ?? resolveLoaderIconPath(entry.loader);
+            const background = resolveVisualImageSrc(entry.backgroundImageUrl, "/launcher-hero.jpg");
+            const icon = resolveVisualImageSrc(entry.customIconUrl) ?? resolveLoaderIconPath(entry.loader);
             const selected = selectedProfileId === entry.id;
 
             return (

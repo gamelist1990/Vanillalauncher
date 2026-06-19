@@ -347,7 +347,7 @@ function App() {
     upsertProgress({
       operationId,
       title: "Xbox 認証確認",
-      detail: "確認を開始しています (0/0)",
+      detail: "確認を開始しています",
       percent: 0,
     });
 
@@ -363,15 +363,18 @@ function App() {
             `${stateResult.message} 試行 ${tried}/${total} で起動準備が完了しました。`,
           );
         } else {
-          pushNotice(
-            "info",
-            `${stateResult.message} 試行 ${tried}/${total}。`,
-          );
+          if (total > 0) {
+            pushNotice(
+              "info",
+              `${stateResult.message} 試行 ${tried}/${total}。`,
+            );
+          }
         }
       } else {
+        const attemptSuffix = total > 0 ? `試行 ${tried}/${total}。` : "";
         pushNotice(
           "info",
-          `${stateResult.message} 既存情報でも起動できない場合は、Minecraft Java 版を利用できるアカウントで公式 Launcher にログインしてください。試行 ${tried}/${total}。`,
+          `${stateResult.message} 既存情報でも起動できない場合は、Minecraft Java 版を利用できるアカウントで公式 Launcher にログインしてください。${attemptSuffix}`,
         );
       }
 

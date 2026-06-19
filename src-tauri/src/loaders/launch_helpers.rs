@@ -260,9 +260,6 @@ pub(super) async fn resolve_launch_auth() -> Result<VersionLaunchAuth, String> {
     let expires_at = account
         .as_ref()
         .and_then(|account| account.access_token_expires_at.as_deref());
-    let active_account_profile = account
-        .as_ref()
-        .and_then(xbox_auth::launcher_account_profile);
     let secure_cached_auth = if let Some(active_account) = account.as_ref() {
         if let Some(cached) = xbox_auth::read_secure_launch_token(Some(active_account)) {
             if xbox_auth::is_access_token_expired(
@@ -333,7 +330,7 @@ pub(super) async fn resolve_launch_auth() -> Result<VersionLaunchAuth, String> {
             && !xbox_auth::is_access_token_expired(&raw_access_token, expires_at)
         {
             app_log::append_log("INFO", "trying launcher_accounts access token");
-            if let Some((profile, matched_account, used_local_hint)) =
+                if let Some((profile, matched_account, used_local_hint)) =
                 xbox_auth::resolve_verified_minecraft_profile(
                     &raw_access_token,
                     "launcher_accounts access token",
@@ -342,51 +339,39 @@ pub(super) async fn resolve_launch_auth() -> Result<VersionLaunchAuth, String> {
                 )
                 .await
             {
-                let resolved_account = matched_account.or_else(|| account.clone());
-                if launch_auth_matches_selected_account(
-                    account.as_ref(),
-                    Some(&profile),
-                    resolved_account.as_ref(),
-                ) {
-                    Some((
-                        raw_access_token.clone(),
-                        profile,
-                        resolved_account,
-                        if used_local_hint {
-                            "direct-account-local".to_string()
-                        } else {
-                            "direct-account".to_string()
-                        },
-                    ))
-                } else {
+                if used_local_hint {
                     app_log::append_log(
                         "WARN",
-                        "launcher_accounts access token resolved to a different account; ignoring",
+                        "launcher_accounts access token only matched local entitlement hint; online launch requires verified Minecraft profile",
                     );
                     None
-                }
-            } else {
-                if let Some(active_account) = account.clone().filter(|entry| {
-                    xbox_auth::launcher_account_has_java_access_hint(entry, &java_access_hints)
-                }) {
-                    active_account_profile.clone().map(|profile| {
-                        app_log::append_log(
-                            "INFO",
-                            format!(
-                                "launcher_accounts access token fell back to local entitlement hint xuid={}",
-                                active_account.xuid.as_deref().unwrap_or("unknown")
-                            ),
-                        );
-                        (
+                } else {
+                    let resolved_account = matched_account.or_else(|| account.clone());
+                    if launch_auth_matches_selected_account(
+                        account.as_ref(),
+                        Some(&profile),
+                        resolved_account.as_ref(),
+                    ) {
+                        Some((
                             raw_access_token.clone(),
                             profile,
-                            Some(active_account),
-                            "direct-account-local".to_string(),
-                        )
-                    })
-                } else {
-                    None
+                            resolved_account,
+                            "direct-account".to_string(),
+                        ))
+                    } else {
+                        app_log::append_log(
+                            "WARN",
+                            "launcher_accounts access token resolved to a different account; ignoring",
+                        );
+                        None
+                    }
                 }
+            } else {
+                app_log::append_log(
+                    "WARN",
+                    "launcher_accounts access token could not verify Minecraft Java ownership; refusing local entitlement fallback in online mode",
+                );
+                None
             }
         } else {
             app_log::append_log(
@@ -398,6 +383,16 @@ pub(super) async fn resolve_launch_auth() -> Result<VersionLaunchAuth, String> {
     } else {
         None
     };
+
+    if secure_cached_auth.is_none() && direct_account_auth.is_none() && account.is_some() {
+        app_log::append_log(
+            "WARN",
+            "selected Microsoft account could not be verified with secure/direct auth; skipping slow Xbox TokenBroker fallback and stopping online launch immediately",
+        );
+        return Err(
+            "オンラインモードのため起動を停止しました。選択中の Microsoft アカウントで Minecraft Java の所有権を確認できません。オフライン起動へ自動フォールバックしません。アカウント画面で Java 所有確認を行うか、設定で明示的にオフライン起動を有効にしてください。".to_string(),
+        );
+    }
 
     let cached_xbox_tokens = if secure_cached_auth.is_none() && direct_account_auth.is_none() {
         match xbox_auth::read_cached_xbox_identity_tokens() {
@@ -464,7 +459,13 @@ pub(super) async fn resolve_launch_auth() -> Result<VersionLaunchAuth, String> {
                 xbox_auth::exchange_rps_ticket_for_minecraft_auth(&candidate_token, &context).await;
             if let Some(exchange) = exchange_result {
                 let Some(access_token) = exchange.minecraft_access_token else {
-                    tokio::time::sleep(Duration::from_millis(180)).await;
+                    xbox_auth::mark_rps_attempt_failed(
+                        &candidate_token,
+                        &xbox_token,
+                        &variant_label,
+                        account.as_ref(),
+                        "minecraft-access-token-missing",
+                    );
                     continue;
                 };
                 let verification_context = format!("{context} -> minecraft/profile");
@@ -478,6 +479,24 @@ pub(super) async fn resolve_launch_auth() -> Result<VersionLaunchAuth, String> {
                     )
                     .await
                 {
+                    if used_local_hint {
+                        app_log::append_log(
+                            "WARN",
+                            format!(
+                                "cached Xbox token only matched local entitlement hint; online launch requires verified Minecraft profile source={} variant={}",
+                                xbox_token.source_path.display(),
+                                variant_label
+                            ),
+                        );
+                        xbox_auth::mark_rps_attempt_failed(
+                            &candidate_token,
+                            &xbox_token,
+                            &variant_label,
+                            account.as_ref(),
+                            "minecraft-java-access-only-local-hint",
+                        );
+                        continue;
+                    }
                     if !launch_auth_matches_selected_account(
                         account.as_ref(),
                         Some(&profile),
@@ -491,7 +510,13 @@ pub(super) async fn resolve_launch_auth() -> Result<VersionLaunchAuth, String> {
                                 variant_label
                             ),
                         );
-                        tokio::time::sleep(Duration::from_millis(180)).await;
+                        xbox_auth::mark_rps_attempt_failed(
+                            &candidate_token,
+                            &xbox_token,
+                            &variant_label,
+                            account.as_ref(),
+                            "resolved-to-different-account",
+                        );
                         continue;
                     }
                     app_log::append_log("INFO", "Xbox token exchanged via /launcher/login");
@@ -516,9 +541,22 @@ pub(super) async fn resolve_launch_auth() -> Result<VersionLaunchAuth, String> {
                         variant_label
                     ),
                 );
+                xbox_auth::mark_rps_attempt_failed(
+                    &candidate_token,
+                    &xbox_token,
+                    &variant_label,
+                    account.as_ref(),
+                    "minecraft-java-access-not-verified",
+                );
             }
 
-            tokio::time::sleep(Duration::from_millis(180)).await;
+            xbox_auth::mark_rps_attempt_failed(
+                &candidate_token,
+                &xbox_token,
+                &variant_label,
+                account.as_ref(),
+                "xbox-rps-exchange-failed",
+            );
         }
         if resolved_auth.is_none() {
             app_log::append_log("WARN", "all cached Xbox token exchanges failed");

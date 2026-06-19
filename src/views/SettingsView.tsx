@@ -24,8 +24,6 @@ export function SettingsView({
   status,
   busy,
   onToggleTempCache,
-  onToggleOfflineMode,
-  onChangeOfflineUsername,
   onToggleOfficialLauncherAutoInstall,
   onEnsureOfficialLauncher,
   onEnsureJavaRuntime,
@@ -41,8 +39,6 @@ export function SettingsView({
     ? "キャッシュ最適化: 稼働中"
     : "キャッシュ最適化: 停止中";
   const customJavaPath = settings?.customJavaPath ?? status?.customJavaPath ?? "";
-  const offlineModeEnabled = settings?.offlineModeEnabled ?? false;
-  const offlineUsername = settings?.offlineUsername ?? "";
   const officialLauncherAutoInstall = settings?.officialLauncherAutoInstall ?? false;
 
   return (
@@ -54,7 +50,7 @@ export function SettingsView({
             <p className="eyebrow">Settings</p>
             <h2 className="header-title">ランチャー設定</h2>
             <p className="header-subtitle">
-              Temp キャッシュ・Java ランタイム・起動モードを管理します
+              Temp キャッシュ・Java ランタイムを管理します
             </p>
           </div>
           <div className={`settings-health-badge ${healthBadgeTone}`}>
@@ -72,10 +68,6 @@ export function SettingsView({
             </strong>
           </div>
           <div className="settings-stat">
-            <span>起動モード</span>
-            <strong>{offlineModeEnabled ? "オフライン" : "オンライン"}</strong>
-          </div>
-          <div className="settings-stat">
             <span>公式 Launcher</span>
             <strong>{status?.officialLauncherAvailable ? "検出済み" : "未検出"}</strong>
           </div>
@@ -87,50 +79,6 @@ export function SettingsView({
             <span>キャッシュ件数</span>
             <strong>{status?.cacheFileCount ?? 0}</strong>
           </div>
-        </div>
-      </div>
-
-      {/* ===== 起動モード ===== */}
-      <div className="settings-section">
-        <h3 className="settings-section-title">🎮 起動モード</h3>
-        <div className="settings-field panel">
-          <div className="settings-field-header">
-            <div>
-              <p className="settings-field-label">オフライン起動</p>
-              <p className="settings-field-desc">
-                通常はオンラインモード推奨です。オフライン起動を有効にした場合のみ、下のユーザー名でローカル起動します。
-              </p>
-            </div>
-          </div>
-          <div className="segmented" role="group" aria-label="起動モード設定">
-            <button
-              type="button"
-              className={!offlineModeEnabled ? "is-active" : ""}
-              onClick={() => onToggleOfflineMode(false)}
-              disabled={busy || !settings}
-            >
-              オンライン
-            </button>
-            <button
-              type="button"
-              className={offlineModeEnabled ? "is-active" : ""}
-              onClick={() => onToggleOfflineMode(true)}
-              disabled={busy || !settings}
-            >
-              オフライン
-            </button>
-          </div>
-          <label className="settings-path-row" style={{ marginTop: 14 }}>
-            <span className="settings-path-label">オフラインユーザー名</span>
-            <input
-              className="profile-name-input"
-              value={offlineUsername}
-              onChange={(event) => onChangeOfflineUsername(event.target.value)}
-              placeholder="例: Player"
-              disabled={busy || !settings}
-              maxLength={16}
-            />
-          </label>
         </div>
       </div>
 

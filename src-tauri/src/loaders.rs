@@ -32,7 +32,6 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    time::Duration,
 };
 use tauri::AppHandle;
 use zip::ZipArchive;
@@ -275,6 +274,12 @@ pub fn get_launcher_accounts() -> Result<Vec<LauncherAccountEntry>, String> {
         .collect::<Vec<_>>());
 
     for discovered_account in pc_discovered_accounts {
+        if !discovered_account.xbox_profile_verified
+            || xbox_auth::read_secure_launch_token(Some(&discovered_account)).is_none()
+        {
+            continue;
+        }
+
         if let Some((target, _, _)) = merged_accounts
             .iter_mut()
             .find(|(account, _, _)| launcher_accounts_share_identity(account, &discovered_account))
@@ -283,7 +288,7 @@ pub fn get_launcher_accounts() -> Result<Vec<LauncherAccountEntry>, String> {
             continue;
         }
 
-        merged_accounts.push((discovered_account, false, "pc-scan".to_string()));
+        merged_accounts.push((discovered_account, true, "pc-verified".to_string()));
     }
 
     let mut entries = Vec::new();
