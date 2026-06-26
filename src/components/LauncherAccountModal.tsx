@@ -411,20 +411,36 @@ export function LauncherAccountModal({
   onChangeOfflineUsername,
   onOpenOfficialLauncher,
 }: LauncherAccountModalProps) {
+  const [draftOfflineUsername, setDraftOfflineUsername] = useState(() => offlineUsername);
+
+  useEffect(() => {
+    if (open) {
+      setDraftOfflineUsername(offlineUsername);
+    }
+  }, [open, offlineUsername]);
+
+  const handleClose = () => {
+    const nextOfflineUsername = draftOfflineUsername.trim() || "Player";
+    if (nextOfflineUsername !== offlineUsername) {
+      onChangeOfflineUsername(nextOfflineUsername);
+    }
+    onClose();
+  };
+
   // スクロールロック
   useEffect(() => {
     if (!open) return undefined;
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") handleClose();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => {
       document.body.style.overflow = prev;
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [open, onClose]);
+  }, [open, handleClose]);
 
   const [activeTab, setActiveTab] = useState<AccountManagerTab>("accounts");
   const [accountQuery, setAccountQuery] = useState("");
@@ -453,7 +469,8 @@ export function LauncherAccountModal({
     (account) => account.authSource !== "microsoft-oauth" && account.authSource !== "pc-scan",
   );
   const normalizedQuery = accountQuery.trim().toLowerCase();
-  const onlineModeLabel = offlineModeEnabled ? `オフライン: ${offlineUsername || "Player"}` : "オンライン起動";
+  const effectiveOfflineUsername = draftOfflineUsername.trim() || offlineUsername || "Player";
+  const onlineModeLabel = offlineModeEnabled ? `オフライン: ${effectiveOfflineUsername}` : "オンライン起動";
   const activeSourceLabel = selectedAccount
     ? selectedAccount.authSource === "microsoft-oauth"
       ? "Microsoft"
@@ -518,7 +535,7 @@ export function LauncherAccountModal({
 
   return (
     <div className="modal-layer" role="dialog" aria-modal="true" aria-labelledby="acct-mgr-title">
-      <button type="button" className="modal-backdrop" onClick={onClose} aria-label="閉じる" />
+      <button type="button" className="modal-backdrop" onClick={handleClose} aria-label="閉じる" />
 
       <article className="modal-sheet modal-sheet-wide acct-mgr-sheet acct-mgr-pro-sheet">
 
@@ -535,7 +552,7 @@ export function LauncherAccountModal({
               </p>
             </div>
           </div>
-          <button type="button" className="acct-mgr-close" onClick={onClose} aria-label="閉じる">✕</button>
+          <button type="button" className="acct-mgr-close" onClick={handleClose} aria-label="閉じる">✕</button>
         </header>
 
         {/* ===== スキャン進行中バナー ===== */}
@@ -608,7 +625,7 @@ export function LauncherAccountModal({
                     <AccountAvatar account={selectedAccount} className="acct-mgr-current-avatar" />
                   )}
                   <div className="acct-mgr-current-copy">
-                    <strong>{offlineModeEnabled ? offlineUsername || "Player" : selectedAccount?.username ?? "アカウント未選択"}</strong>
+                    <strong>{offlineModeEnabled ? effectiveOfflineUsername : selectedAccount?.username ?? "アカウント未選択"}</strong>
                     <span>
                       {offlineModeEnabled
                         ? "オフライン起動中 — Microsoft 認証は使いません"
@@ -767,12 +784,14 @@ export function LauncherAccountModal({
                   <input
                     id="acct-mgr-offline-name"
                     className="acct-mgr-offline-input"
-                    value={offlineUsername}
-                    onChange={(e) => onChangeOfflineUsername(e.target.value)}
+                    value={draftOfflineUsername}
+                    onChange={(e) => setDraftOfflineUsername(e.target.value)}
+                    onBlur={(e) => setDraftOfflineUsername(e.target.value.trim() || "Player")}
                     placeholder="例: Player"
                     maxLength={16}
                     disabled={busy}
                   />
+                  <span className="acct-settings-desc">閉じるときに保存します。</span>
                 </div>
               )}
             </div>

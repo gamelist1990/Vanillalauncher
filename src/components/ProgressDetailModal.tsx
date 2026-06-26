@@ -14,7 +14,7 @@ type ProgressDetailModalProps = {
 };
 
 function estimateRemainingMs(progress: ProgressSnapshot, referenceTime: number) {
-  if (progress.status === "completed") {
+  if (progress.status === "completed" || progress.status === "error") {
     return 0;
   }
 
@@ -79,6 +79,7 @@ export function ProgressDetailModal({
   onClose,
 }: ProgressDetailModalProps) {
   const [now, setNow] = useState(() => Date.now());
+  const latestHistoryEntry = progress?.history[progress.history.length - 1];
 
   useEffect(() => {
     if (!open) {
@@ -136,7 +137,9 @@ export function ProgressDetailModal({
         ? "完了"
         : progress.status === "active"
           ? "進行中"
-          : "通知終了";
+          : progress.status === "error"
+            ? "エラー"
+            : "通知終了";
 
     return {
       elapsedMs,
@@ -150,6 +153,44 @@ export function ProgressDetailModal({
 
   if (!open || !progress || !derived) {
     return null;
+  }
+
+  if (progress.status === "error") {
+    return (
+      <div
+        className="modal-layer"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="progress-error-title"
+      >
+        <button
+          type="button"
+          className="modal-backdrop"
+          onClick={onClose}
+          aria-label="エラーメッセージを閉じる"
+        />
+
+        <article className="modal-sheet progress-error-sheet">
+          <div className="modal-copy progress-error-copy">
+            <span className="section-kicker">インストールエラー</span>
+            <h3 id="progress-error-title">{progress.title}に失敗しました</h3>
+            <p>{progress.errorMessage ?? progress.detail}</p>
+          </div>
+
+          <section className="progress-error-detail">
+            <span>最後に実行していた処理</span>
+            <strong>{latestHistoryEntry?.title ?? progress.title}</strong>
+            <p>{latestHistoryEntry?.detail ?? progress.detail}</p>
+          </section>
+
+          <div className="modal-actions">
+            <button type="button" className="danger-button" onClick={onClose}>
+              閉じる
+            </button>
+          </div>
+        </article>
+      </div>
+    );
   }
 
   return (

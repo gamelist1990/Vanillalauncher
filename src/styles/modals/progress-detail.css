@@ -118,6 +118,49 @@
   color: var(--accent);
 }
 
+.progress-status-pill.is-error {
+  color: #fecaca;
+  border-color: rgba(248, 113, 113, 0.38);
+  background: rgba(127, 29, 29, 0.28);
+}
+
+.progress-error-sheet {
+  border-color: rgba(248, 113, 113, 0.35);
+  box-shadow: 0 24px 80px rgba(127, 29, 29, 0.35);
+}
+
+.progress-error-copy .section-kicker,
+.progress-error-copy h3 {
+  color: #fecaca;
+}
+
+.progress-error-detail {
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid rgba(248, 113, 113, 0.22);
+  border-radius: 18px;
+  background: rgba(127, 29, 29, 0.16);
+}
+
+.progress-error-detail span {
+  display: block;
+  margin-bottom: 6px;
+  color: rgba(254, 202, 202, 0.78);
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.progress-error-detail strong {
+  color: #fee2e2;
+}
+
+.progress-error-detail p {
+  margin: 8px 0 0;
+  color: rgba(255, 241, 242, 0.82);
+  white-space: pre-wrap;
+}
+
 /* ---- Metrics grid ---- */
 .progress-detail-metrics {
   display: grid;

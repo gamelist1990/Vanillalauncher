@@ -81,6 +81,8 @@ struct LauncherLoginResponse {
 #[derive(Debug, Deserialize)]
 struct MicrosoftDeviceTokenResponse {
     access_token: String,
+    #[serde(default)]
+    refresh_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -156,6 +158,8 @@ struct SecureLaunchTokenCacheEntry {
     access_token: String,
     #[serde(default)]
     expires_at: Option<String>,
+    #[serde(default)]
+    microsoft_refresh_token: Option<String>,
     username: String,
     uuid: String,
     #[serde(default)]
@@ -173,6 +177,7 @@ struct SecureLaunchTokenCacheEntry {
 pub(super) struct SecureLaunchToken {
     pub(super) access_token: String,
     pub(super) expires_at: Option<String>,
+    pub(super) microsoft_refresh_token: Option<String>,
     pub(super) username: String,
     pub(super) uuid: String,
     pub(super) xuid: String,
@@ -500,6 +505,8 @@ pub(super) async fn read_cached_xbox_launcher_accounts(
                 let secure_token = SecureLaunchToken {
                     access_token: access_token.clone(),
                     expires_at: access_token_expires_at.clone(),
+                    microsoft_refresh_token: read_secure_launch_token(Some(&*account))
+                        .and_then(|token| token.microsoft_refresh_token),
                     username: verified_profile.1.clone(),
                     uuid: normalize_uuid_value(&verified_profile.0),
                     xuid: account.xuid.clone().unwrap_or_default(),
@@ -1493,6 +1500,7 @@ pub(super) async fn start_xbox_sign_in(
     let secure_token = SecureLaunchToken {
         access_token: minecraft_access_token.clone(),
         expires_at: access_token_expiry_rfc3339(&minecraft_access_token),
+        microsoft_refresh_token: microsoft_token.refresh_token.clone(),
         username: verified_profile.1.clone(),
         uuid: normalize_uuid_value(&verified_profile.0),
         xuid: account.xuid.clone().unwrap_or_default(),
@@ -1704,7 +1712,7 @@ async fn wait_for_microsoft_auth_code_from_webview(
 fn microsoft_auth_code_url(redirect_uri: &str) -> String {
     format!(
         "https://login.live.com/oauth20_authorize.srf?prompt=select_account&client_id=00000000402b5328&response_type=code&scope={scope}&redirect_uri={redirect_uri}&lw=1&fl=dob%2Ceasi2&xsup=1&nopa=2",
-        scope = url_query_encode("service::user.auth.xboxlive.com::MBI_SSL"),
+        scope = url_query_encode("service::user.auth.xboxlive.com::MBI_SSL offline_access"),
         redirect_uri = url_query_encode(redirect_uri),
     )
 }
@@ -1772,7 +1780,7 @@ async fn exchange_microsoft_auth_code_for_token(
         "https://login.live.com/oauth20_token.srf?client_id=00000000402b5328&code={code}&redirect_uri={redirect_uri}&grant_type=authorization_code&scope={scope}",
         code = url_query_encode(code),
         redirect_uri = url_query_encode(redirect_uri),
-        scope = url_query_encode("service::user.auth.xboxlive.com::MBI_SSL"),
+        scope = url_query_encode("service::user.auth.xboxlive.com::MBI_SSL offline_access"),
     );
     let response = client
         .get(&token_url)
@@ -1798,6 +1806,145 @@ async fn exchange_microsoft_auth_code_for_token(
         ),
     );
     Ok(None)
+}
+
+async fn exchange_microsoft_refresh_token_for_token(
+    client: &reqwest::Client,
+    refresh_token: &str,
+) -> Result<Option<MicrosoftDeviceTokenResponse>, String> {
+    let token_url = format!(
+        "https://login.live.com/oauth20_token.srf?client_id=00000000402b5328&refresh_token={refresh_token}&grant_type=refresh_token&scope={scope}",
+        refresh_token = url_query_encode(refresh_token),
+        scope = url_query_encode("service::user.auth.xboxlive.com::MBI_SSL offline_access"),
+    );
+    let response = client
+        .get(&token_url)
+        .send()
+        .await
+        .map_err(|error| format!("Microsoft OAuth refresh-token request failed: {error}"))?;
+
+    let status = response.status().as_u16();
+    let text = response.text().await.unwrap_or_default();
+    if (200..300).contains(&status) {
+        app_log::append_log("INFO", "Microsoft OAuth refresh-token exchange succeeded");
+        return serde_json::from_str::<MicrosoftDeviceTokenResponse>(&text)
+            .map(Some)
+            .map_err(|error| format!("Microsoft OAuth refresh-token response parse failed: {error}"));
+    }
+
+    app_log::append_log(
+        "WARN",
+        format!(
+            "Microsoft OAuth refresh-token exchange returned status {} body={}",
+            status,
+            truncate_log_text(&text, 800)
+        ),
+    );
+    Ok(None)
+}
+
+pub(super) async fn refresh_secure_launch_token(
+    account: &crate::minecraft::LauncherAccount,
+    launcher_accounts: &[crate::minecraft::LauncherAccount],
+    java_access_hints: &HashMap<String, bool>,
+    context: &str,
+) -> Option<(
+    SecureLaunchToken,
+    (String, String),
+    Option<crate::minecraft::LauncherAccount>,
+)> {
+    let cached = read_secure_launch_token(Some(account))?;
+    let refresh_token = cached
+        .microsoft_refresh_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let client = build_mojang_client()?;
+    let microsoft_token = match exchange_microsoft_refresh_token_for_token(&client, refresh_token).await {
+        Ok(Some(token)) => token,
+        Ok(None) => return None,
+        Err(error) => {
+            app_log::append_log(
+                "WARN",
+                format!("Microsoft OAuth refresh-token exchange failed context={context}: {error}"),
+            );
+            return None;
+        }
+    };
+
+    let raw_rps_ticket = microsoft_token.access_token.clone();
+    let prefixed_rps_ticket = format!("d={}", microsoft_token.access_token);
+    let mut exchange = None;
+    for (ticket_kind, rps_ticket) in [
+        ("raw-refresh-access-token", raw_rps_ticket.as_str()),
+        ("d-prefixed-refresh-access-token", prefixed_rps_ticket.as_str()),
+    ] {
+        let exchange_context = format!("{context}:refresh:{ticket_kind}");
+        if let Some(found) = exchange_rps_ticket_for_minecraft_auth(rps_ticket, &exchange_context).await {
+            exchange = Some(found);
+            break;
+        }
+    }
+
+    let exchange = exchange?;
+    let minecraft_access_token = exchange.minecraft_access_token?;
+    let (verified_profile, matched_account, used_local_hint) =
+        resolve_verified_minecraft_profile_with_xbox_identity(
+            &minecraft_access_token,
+            &format!("{context}:refresh -> minecraft/profile"),
+            launcher_accounts,
+            java_access_hints,
+            exchange.xbox_identity.as_ref(),
+        )
+        .await?;
+
+    if used_local_hint {
+        app_log::append_log(
+            "WARN",
+            format!("Microsoft OAuth refresh only matched local entitlement hint context={context}"),
+        );
+        return None;
+    }
+
+    let mut resolved_account = matched_account.or_else(|| Some(account.clone()));
+    if let Some(entry) = resolved_account.as_mut() {
+        merge_verified_identity_into_launcher_account(entry, &verified_profile, None);
+        merge_xbox_identity_into_launcher_account(entry, exchange.xbox_identity.as_ref());
+        entry.auth_source = Some("microsoft-oauth".to_string());
+        entry.xbox_profile_verified = true;
+    }
+
+    let refresh_token = microsoft_token
+        .refresh_token
+        .clone()
+        .or(cached.microsoft_refresh_token.clone());
+    let secure_token = SecureLaunchToken {
+        access_token: minecraft_access_token,
+        expires_at: access_token_expiry_rfc3339(&microsoft_token.access_token)
+            .or_else(|| access_token_expiry_rfc3339(&cached.access_token)),
+        microsoft_refresh_token: refresh_token,
+        username: verified_profile.1.clone(),
+        uuid: normalize_uuid_value(&verified_profile.0),
+        xuid: resolved_account
+            .as_ref()
+            .and_then(|entry| entry.xuid.clone())
+            .or_else(|| Some(cached.xuid.clone()).filter(|value| !value.trim().is_empty()))
+            .unwrap_or_default(),
+        user_properties: resolved_account
+            .as_ref()
+            .and_then(|entry| entry.user_properties.clone())
+            .unwrap_or_else(|| cached.user_properties.clone()),
+        user_type: "msa".to_string(),
+    };
+
+    if let Err(error) = persist_secure_launch_token(Some(account), &secure_token) {
+        app_log::append_log(
+            "WARN",
+            format!("failed to persist refreshed secure launch token context={context}: {error}"),
+        );
+    }
+
+    Some((secure_token, verified_profile, resolved_account))
 }
 
 
@@ -2297,6 +2444,7 @@ pub(super) fn read_secure_launch_token(
         return Some(SecureLaunchToken {
             access_token: entry.access_token.clone(),
             expires_at: entry.expires_at.clone(),
+            microsoft_refresh_token: entry.microsoft_refresh_token.clone(),
             username: entry.username.clone(),
             uuid: normalize_uuid_value(&entry.uuid),
             xuid: entry.xuid.clone().unwrap_or_default(),
@@ -2338,9 +2486,16 @@ pub(super) fn persist_secure_launch_token(
         .filter(|value| !value.is_empty())
         .map(str::to_string)
         .or_else(|| Some(token.xuid.trim().to_string()).filter(|value| !value.is_empty()));
+    let preserved_refresh_token = keys
+        .iter()
+        .find_map(|key| cache.entries.get(key).and_then(|entry| entry.microsoft_refresh_token.clone()));
     let entry = SecureLaunchTokenCacheEntry {
         access_token: token.access_token.clone(),
         expires_at: token.expires_at.clone(),
+        microsoft_refresh_token: token
+            .microsoft_refresh_token
+            .clone()
+            .or(preserved_refresh_token),
         username: token.username.clone(),
         uuid: normalize_uuid_value(&token.uuid),
         xuid,

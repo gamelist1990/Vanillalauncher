@@ -266,9 +266,26 @@ pub(super) async fn resolve_launch_auth() -> Result<VersionLaunchAuth, String> {
                 &cached.access_token,
                 cached.expires_at.as_deref(),
             ) {
-                app_log::append_log("INFO", "secure launch token cache expired; clearing");
-                xbox_auth::clear_secure_launch_token(Some(active_account));
-                None
+                app_log::append_log("INFO", "secure launch token cache expired; trying Microsoft OAuth refresh token");
+                if let Some((refreshed, profile, refreshed_account)) = xbox_auth::refresh_secure_launch_token(
+                    active_account,
+                    &launcher_accounts,
+                    &java_access_hints,
+                    "secure launch token cache expired",
+                )
+                .await
+                {
+                    Some((
+                        refreshed.access_token,
+                        profile,
+                        refreshed_account,
+                        "direct-secure-cache".to_string(),
+                    ))
+                } else {
+                    app_log::append_log("INFO", "secure launch token refresh failed; clearing expired cache");
+                    xbox_auth::clear_secure_launch_token(Some(active_account));
+                    None
+                }
             } else {
                 app_log::append_log("INFO", "trying secure launch token cache");
                 let verification_context = "secure launch token cache";
@@ -312,10 +329,26 @@ pub(super) async fn resolve_launch_auth() -> Result<VersionLaunchAuth, String> {
                 } else {
                     app_log::append_log(
                         "WARN",
-                        "secure launch token cache failed verification; clearing",
+                        "secure launch token cache failed verification; trying Microsoft OAuth refresh token",
                     );
-                    xbox_auth::clear_secure_launch_token(Some(active_account));
-                    None
+                    if let Some((refreshed, profile, refreshed_account)) = xbox_auth::refresh_secure_launch_token(
+                        active_account,
+                        &launcher_accounts,
+                        &java_access_hints,
+                        "secure launch token cache verification failed",
+                    )
+                    .await
+                    {
+                        Some((
+                            refreshed.access_token,
+                            profile,
+                            refreshed_account,
+                            "direct-secure-cache".to_string(),
+                        ))
+                    } else {
+                        xbox_auth::clear_secure_launch_token(Some(active_account));
+                        None
+                    }
                 }
             }
         } else {
@@ -640,6 +673,10 @@ pub(super) async fn resolve_launch_auth() -> Result<VersionLaunchAuth, String> {
         let secure_token = xbox_auth::SecureLaunchToken {
             access_token: access_token.clone(),
             expires_at: xbox_auth::access_token_expiry_rfc3339(&access_token),
+            microsoft_refresh_token: xbox_auth::read_secure_launch_token(
+                metadata_account.or(account.as_ref()),
+            )
+            .and_then(|token| token.microsoft_refresh_token),
             username: username.clone(),
             uuid: uuid.clone(),
             xuid: xuid.clone(),

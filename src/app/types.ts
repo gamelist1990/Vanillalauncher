@@ -15,7 +15,7 @@ export type ProgressState = {
   percent: number;
 };
 
-export type ProgressStatus = "active" | "completed" | "inactive";
+export type ProgressStatus = "active" | "completed" | "inactive" | "error";
 
 export type ProgressHistoryEntry = {
   id: string;
@@ -30,6 +30,7 @@ export type ProgressSnapshot = ProgressState & {
   startedAt: number;
   updatedAt: number;
   completedAt: number | null;
+  errorMessage?: string | null;
   history: ProgressHistoryEntry[];
 };
 

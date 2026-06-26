@@ -60,6 +60,7 @@ type ModRemoteStateCacheEntry = {
 
 const MOD_UPDATE_CACHE_WINDOW_MS = 5 * 60 * 1000;
 const PROGRESS_HISTORY_LIMIT = 18;
+const PROGRESS_CLEAR_DELAY_MS = 680;
 const DISCOVER_PAGE_SIZE = 18;
 
 function mergeDiscoverResults(
@@ -162,6 +163,44 @@ function markProgressSnapshotEnded(
   };
 }
 
+function markProgressSnapshotFailed(
+  current: Record<string, ProgressSnapshot>,
+  operationId: string,
+  fallbackTitle: string,
+  message: string,
+) {
+  const now = Date.now();
+  const existing = current[operationId];
+  const title = existing?.title ?? fallbackTitle;
+  const percent = existing?.percent ?? 0;
+  const history = [
+    ...(existing?.history ?? []),
+    {
+      id: `${operationId}-${now}-error`,
+      timestamp: now,
+      title: `${title}でエラーが発生しました`,
+      detail: message,
+      percent,
+    },
+  ].slice(-PROGRESS_HISTORY_LIMIT);
+
+  return {
+    ...current,
+    [operationId]: {
+      operationId,
+      title,
+      detail: message,
+      percent,
+      status: "error" as const,
+      startedAt: existing?.startedAt ?? now,
+      updatedAt: now,
+      completedAt: null,
+      errorMessage: message,
+      history,
+    },
+  };
+}
+
 function App() {
   const [snapshot, setSnapshot] = useState<LauncherSnapshot | null>(null);
   const [selectedProfileId, setSelectedProfileId] = useState("");
@@ -170,6 +209,7 @@ function App() {
   const [accountNotices, setAccountNotices] = useState<Notice[]>([]);
   const [progressItems, setProgressItems] = useState<ProgressState[]>([]);
   const [progressSnapshots, setProgressSnapshots] = useState<Record<string, ProgressSnapshot>>({});
+  const progressClearTimersRef = useRef<Map<string, number>>(new Map());
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [isCompactSidebar, setIsCompactSidebar] = useState(() =>
     typeof window === "undefined"
@@ -327,9 +367,19 @@ function App() {
       return [...next, progress];
     });
     setProgressSnapshots((current) => upsertProgressSnapshotEntry(current, progress));
+
+    if (progress.percent >= 100) {
+      scheduleProgressClear(progress.operationId);
+    }
   }
 
   function clearProgress(operationId: string) {
+    const existingTimer = progressClearTimersRef.current.get(operationId);
+    if (existingTimer !== undefined) {
+      window.clearTimeout(existingTimer);
+      progressClearTimersRef.current.delete(operationId);
+    }
+
     setProgressItems((current) =>
       current.filter((item) => item.operationId !== operationId),
     );
@@ -337,10 +387,39 @@ function App() {
   }
 
   function scheduleProgressClear(operationId: string) {
-    window.setTimeout(() => {
+    const existingTimer = progressClearTimersRef.current.get(operationId);
+    if (existingTimer !== undefined) {
+      window.clearTimeout(existingTimer);
+    }
+
+    const timer = window.setTimeout(() => {
       clearProgress(operationId);
-    }, 680);
+    }, PROGRESS_CLEAR_DELAY_MS);
+    progressClearTimersRef.current.set(operationId, timer);
   }
+
+  function showProgressError(operationId: string, fallbackTitle: string, message: string) {
+    const existingTimer = progressClearTimersRef.current.get(operationId);
+    if (existingTimer !== undefined) {
+      window.clearTimeout(existingTimer);
+      progressClearTimersRef.current.delete(operationId);
+    }
+
+    setProgressItems((current) => current.filter((item) => item.operationId !== operationId));
+    setProgressSnapshots((current) =>
+      markProgressSnapshotFailed(current, operationId, fallbackTitle, message),
+    );
+    setProgressDetailDialog({ operationId });
+  }
+
+  useEffect(() => {
+    return () => {
+      for (const timer of progressClearTimersRef.current.values()) {
+        window.clearTimeout(timer);
+      }
+      progressClearTimersRef.current.clear();
+    };
+  }, []);
 
   async function ensureXboxAuthStateBeforeLaunch() {
     const operationId = createOperationId("xbox-auth-check");
@@ -1917,15 +1996,20 @@ function App() {
 
       setActiveView("play");
     } catch (error) {
-      pushNotice(
-        "error",
-        errorMessage(
-          error,
-          `${loaderGuides.find((guide) => guide.id === activeLoader)?.name ?? "Loader"} の導入に失敗しました。`,
-        ),
+      const loaderName = loaderGuides.find((guide) => guide.id === activeLoader)?.name ?? "Loader";
+      const message = errorMessage(
+        error,
+        `${loaderName} の導入に失敗しました。`,
       );
+      showProgressError(operationId, `${loaderName} を導入中`, message);
     } finally {
-      scheduleProgressClear(operationId);
+      setProgressSnapshots((current) => {
+        const existing = current[operationId];
+        if (existing?.status !== "error") {
+          scheduleProgressClear(operationId);
+        }
+        return current;
+      });
       setBusyAction(null);
     }
   }

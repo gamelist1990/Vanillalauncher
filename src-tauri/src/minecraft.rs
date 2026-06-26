@@ -3397,22 +3397,39 @@ fn parse_manifest(text: &str) -> HashMap<String, String> {
 }
 
 fn value_to_string(value: Option<&Value>) -> Option<String> {
-    match value {
+    let text = match value {
         Some(Value::String(text)) => Some(text.to_string()),
         Some(Value::Number(number)) => Some(number.to_string()),
         Some(Value::Bool(flag)) => Some(flag.to_string()),
         _ => None,
-    }
+    }?;
+
+    normalize_mod_metadata_value(&text)
 }
 
 fn toml_value_to_string(value: Option<&TomlValue>) -> Option<String> {
-    match value {
+    let text = match value {
         Some(TomlValue::String(text)) => Some(text.to_string()),
         Some(TomlValue::Integer(number)) => Some(number.to_string()),
         Some(TomlValue::Float(number)) => Some(number.to_string()),
         Some(TomlValue::Boolean(flag)) => Some(flag.to_string()),
         _ => None,
+    }?;
+
+    normalize_mod_metadata_value(&text)
+}
+
+fn normalize_mod_metadata_value(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || is_unresolved_metadata_placeholder(trimmed) {
+        None
+    } else {
+        Some(trimmed.to_string())
     }
+}
+
+fn is_unresolved_metadata_placeholder(value: &str) -> bool {
+    value.starts_with("${") && value.ends_with('}')
 }
 
 fn authors_from_json(value: Option<&Value>) -> Vec<String> {

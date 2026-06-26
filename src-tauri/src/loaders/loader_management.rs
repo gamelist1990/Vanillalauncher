@@ -441,7 +441,8 @@ async fn ensure_forge_version_installed(
         &root,
         "forge",
         &["--installClient"],
-        &combined_version,
+        minecraft_version,
+        &resolved_loader_version,
     )?;
     ensure_version_ready(&root, &version_id).await?;
 
@@ -480,6 +481,7 @@ async fn ensure_neoforge_version_installed(
         &root,
         "neoforge",
         &["--install-client"],
+        minecraft_version,
         &resolved_loader_version,
     )?;
     ensure_version_ready(&root, &version_id).await?;
@@ -1150,7 +1152,8 @@ fn run_staged_installer(
     minecraft_root: &Path,
     loader: &str,
     installer_args: &[&str],
-    version_hint: &str,
+    minecraft_version: &str,
+    loader_version: &str,
 ) -> Result<String, String> {
     let stage_root = prepare_stage_root(loader)?;
     ensure_launcher_profiles_file(&stage_root)?;
@@ -1176,7 +1179,12 @@ fn run_staged_installer(
         ));
     }
 
-    let version_id = detect_installed_version_id(&stage_root, loader, "", version_hint)?;
+    let version_id = detect_installed_version_id(
+        &stage_root,
+        loader,
+        minecraft_version,
+        loader_version,
+    )?;
     copy_stage_artifacts(&stage_root, minecraft_root, &version_id)?;
     let _ = fs::remove_dir_all(&stage_root);
     Ok(version_id)
@@ -1202,6 +1210,7 @@ fn detect_installed_version_id(
     let entries = fs::read_dir(&versions_dir)
         .map_err(|error| format!("{} を読み込めませんでした: {error}", versions_dir.display()))?;
     let mut candidates = Vec::new();
+    let mut discovered_versions = Vec::new();
 
     for entry in entries {
         let entry = entry.map_err(|error| format!("導入結果を確認できませんでした: {error}"))?;
@@ -1209,18 +1218,33 @@ fn detect_installed_version_id(
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();
+        discovered_versions.push(name.clone());
         if matches_version_candidate(loader, &name, minecraft_version, loader_version) {
             candidates.push(name);
         }
     }
 
     candidates.sort_by(|left, right| right.len().cmp(&left.len()).then_with(|| left.cmp(right)));
-    candidates.into_iter().next().ok_or_else(|| {
-        format!(
-            "{} の導入は完了しましたが、version ディレクトリを特定できませんでした。",
-            loader_display_name(loader)
-        )
-    })
+    if let Some(candidate) = candidates.into_iter().next() {
+        return Ok(candidate);
+    }
+
+    discovered_versions.sort_by(|left, right| right.len().cmp(&left.len()).then_with(|| left.cmp(right)));
+    if discovered_versions.len() == 1 {
+        return Ok(discovered_versions.remove(0));
+    }
+
+    let discovered_detail = if discovered_versions.is_empty() {
+        "検出された version ディレクトリはありません。".to_string()
+    } else {
+        format!("検出候補: {}", discovered_versions.join(", "))
+    };
+
+    Err(format!(
+        "{} の導入は完了しましたが、version ディレクトリを特定できませんでした。{}",
+        loader_display_name(loader),
+        discovered_detail
+    ))
 }
 
 fn matches_version_candidate(
