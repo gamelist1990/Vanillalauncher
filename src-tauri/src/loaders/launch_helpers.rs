@@ -12,7 +12,18 @@ pub(super) fn build_launch_arguments(
     let features = launch_feature_flags();
     let mut replacements = HashMap::new();
     replacements.insert("auth_player_name".to_string(), auth.username.clone());
-    replacements.insert("version_name".to_string(), version_id.to_string());
+    // Forge/NeoForge の jvm 引数には `-DignoreList=...,${version_name}.jar` が含まれる。
+    // ここに loader 付き ID (`1.20.1-forge-47.4.1`) を入れると、実際に classpath に入る
+    // 親 Minecraft jar (`1.20.1.jar`) が ignore されず、ModLauncher の JPMS 解決で
+    // `Modules minecraft and _1._20._1 export package ...` が発生する。
+    // そのため、プロファイルに base Minecraft version がある場合はそれを優先する。
+    let launch_version_name = profile
+        .game_version
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(version_id);
+    replacements.insert("version_name".to_string(), launch_version_name.to_string());
     replacements.insert("game_directory".to_string(), profile.game_dir.clone());
     replacements.insert(
         "assets_root".to_string(),

@@ -13,7 +13,7 @@ use std::{
     fs::{self, File},
     io::Read,
     path::{Path, PathBuf},
-    sync::OnceLock,
+    sync::{Mutex, OnceLock},
     time::UNIX_EPOCH,
 };
 use toml::Value as TomlValue;
@@ -57,6 +57,21 @@ struct ParsedModDependency {
     requirement: String,
     required: bool,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LocalModCacheSignature {
+    file_name: String,
+    size_bytes: u64,
+    modified_at: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+struct LocalModCacheEntry {
+    signature: Vec<LocalModCacheSignature>,
+    mods: Vec<InstalledMod>,
+}
+
+static LOCAL_MOD_ANALYSIS_CACHE: OnceLock<Mutex<HashMap<String, LocalModCacheEntry>>> = OnceLock::new();
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -2835,6 +2850,14 @@ fn extract_icon_data(archive: &mut ZipArchive<File>, icon_path: &str) -> Option<
 }
 
 fn read_mod_metadata(path: &Path) -> Option<ParsedModMetadata> {
+    read_mod_metadata_with_options(path, true)
+}
+
+fn read_mod_metadata_lightweight(path: &Path) -> Option<ParsedModMetadata> {
+    read_mod_metadata_with_options(path, false)
+}
+
+fn read_mod_metadata_with_options(path: &Path, include_icon: bool) -> Option<ParsedModMetadata> {
     let file = File::open(path).ok()?;
     let mut archive = ZipArchive::new(file).ok()?;
 
@@ -2848,12 +2871,170 @@ fn read_mod_metadata(path: &Path) -> Option<ParsedModMetadata> {
         read_manifest_metadata(&mut archive)?
     };
 
-    // アイコンを同じ archive から一度だけ読んでキャッシュする
-    if let Some(ref icon_path) = metadata.icon_path.clone() {
+    // アイコンを同じ archive から一度だけ読んでキャッシュする。
+    // 大量 Mod の互換性チェックでは include_icon=false にして UI に不要な画像展開を避ける。
+    if include_icon {
+        if let Some(ref icon_path) = metadata.icon_path.clone() {
         metadata.icon_data = extract_icon_data(&mut archive, icon_path);
+        }
     }
 
     Some(metadata)
+}
+
+fn read_mods_lightweight_cached(
+    mods_dir: &Path,
+    profile_loader: Option<&str>,
+    tracked_projects: &HashMap<String, String>,
+) -> Result<Vec<InstalledMod>, String> {
+    if !mods_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    #[derive(Clone)]
+    struct Candidate {
+        path: PathBuf,
+        file_name: String,
+        enabled: bool,
+        size_bytes: u64,
+        modified_at: Option<u64>,
+    }
+
+    let mut candidates = Vec::new();
+    let entries = fs::read_dir(mods_dir)
+        .map_err(|error| format!("{} を読み込めませんでした: {error}", mods_dir.display()))?;
+
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("Mod ファイルの確認に失敗しました: {error}"))?;
+        let path = entry.path();
+        if !path.is_file() || !looks_like_mod_file(&path) {
+            continue;
+        }
+
+        let metadata = entry.metadata().map_err(|error| {
+            format!("{} のメタデータを読めませんでした: {error}", path.display())
+        })?;
+        let file_name = path
+            .file_name()
+            .and_then(OsStr::to_str)
+            .ok_or_else(|| format!("{} のファイル名を解釈できません。", path.display()))?
+            .to_string();
+        let modified_at = metadata
+            .modified()
+            .ok()
+            .and_then(|timestamp| timestamp.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| duration.as_secs());
+
+        candidates.push(Candidate {
+            enabled: !file_name.ends_with(".disabled"),
+            file_name,
+            path,
+            size_bytes: metadata.len(),
+            modified_at,
+        });
+    }
+
+    candidates.sort_by(|left, right| left.file_name.cmp(&right.file_name));
+
+    let signature = candidates
+        .iter()
+        .map(|candidate| LocalModCacheSignature {
+            file_name: candidate.file_name.clone(),
+            size_bytes: candidate.size_bytes,
+            modified_at: candidate.modified_at,
+        })
+        .collect::<Vec<_>>();
+    let cache_key = mods_dir.to_string_lossy().to_string();
+
+    if let Ok(cache) = LOCAL_MOD_ANALYSIS_CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+    {
+        if let Some(entry) = cache.get(&cache_key) {
+            if entry.signature == signature {
+                return Ok(entry.mods.clone());
+            }
+        }
+    }
+
+    let profile_loader = profile_loader.map(str::to_string);
+    let tracked_projects = tracked_projects.clone();
+    let worker_count = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(4)
+        .clamp(1, 6)
+        .min(candidates.len().max(1));
+    let chunk_size = (candidates.len().max(1) + worker_count - 1) / worker_count;
+    let mut mods = Vec::with_capacity(candidates.len());
+
+    std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for chunk in candidates.chunks(chunk_size.max(1)) {
+            let chunk = chunk.to_vec();
+            let profile_loader = profile_loader.clone();
+            let tracked_projects = tracked_projects.clone();
+            handles.push(scope.spawn(move || {
+                let mut parsed_mods = Vec::with_capacity(chunk.len());
+                for candidate in chunk {
+                    let parsed = read_mod_metadata_lightweight(&candidate.path).unwrap_or_else(|| ParsedModMetadata {
+                        display_name: None,
+                        mod_id: None,
+                        version: None,
+                        description: None,
+                        loader: None,
+                        authors: Vec::new(),
+                        dependencies: Vec::new(),
+                        icon_path: None,
+                        icon_data: None,
+                    });
+
+                    parsed_mods.push(InstalledMod {
+                        file_name: candidate.file_name.clone(),
+                        display_name: parsed
+                            .display_name
+                            .unwrap_or_else(|| display_name_for_file(&candidate.file_name)),
+                        source_project_id: tracked_projects.get(&candidate.file_name).cloned(),
+                        mod_id: parsed.mod_id,
+                        version: parsed.version,
+                        description: None,
+                        loader: parsed
+                            .loader
+                            .or_else(|| profile_loader.clone())
+                            .filter(|value| value != "vanilla"),
+                        authors: Vec::new(),
+                        enabled: candidate.enabled,
+                        size_bytes: candidate.size_bytes,
+                        modified_at: candidate.modified_at,
+                        icon_data: None,
+                    });
+                }
+                parsed_mods
+            }));
+        }
+
+        for handle in handles {
+            if let Ok(mut parsed_mods) = handle.join() {
+                mods.append(&mut parsed_mods);
+            }
+        }
+    });
+
+    mods.sort_by(|left, right| left.file_name.cmp(&right.file_name));
+
+    if let Ok(mut cache) = LOCAL_MOD_ANALYSIS_CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+    {
+        cache.insert(
+            cache_key,
+            LocalModCacheEntry {
+                signature,
+                mods: mods.clone(),
+            },
+        );
+    }
+
+    Ok(mods)
 }
 
 pub fn analyze_local_mod(profile_id: &str, mod_path: &str) -> Result<LocalModAnalysis, String> {
@@ -2884,7 +3065,7 @@ pub fn analyze_local_mod(profile_id: &str, mod_path: &str) -> Result<LocalModAna
     let game_version = profile.game_version.as_deref().unwrap_or_default();
     let mods_dir = resolve_profile_mods_dir(profile_id, &profile.game_dir)?;
     let tracked_projects = tracked_project_map(&minecraft_root()?, profile_id);
-    let existing_mods = read_mods(&mods_dir, Some(profile_loader), &tracked_projects)?;
+    let existing_mods = read_mods_lightweight_cached(&mods_dir, Some(profile_loader), &tracked_projects)?;
 
     let existing = parsed.mod_id.as_deref().and_then(|mod_id| {
         existing_mods

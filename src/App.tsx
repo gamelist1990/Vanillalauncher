@@ -1630,6 +1630,7 @@ function App() {
         enabled,
         appSettings?.performanceLiteMode ?? "auto",
         appSettings?.customJavaPath ?? null,
+        appSettings?.javaRuntimeMode ?? "auto",
         appSettings?.offlineModeEnabled ?? false,
         appSettings?.offlineUsername ?? null,
         appSettings?.officialLauncherAutoInstall ?? false,
@@ -1647,6 +1648,7 @@ function App() {
         appSettings?.tempCacheEnabled ?? true,
         appSettings?.performanceLiteMode ?? "auto",
         appSettings?.customJavaPath ?? null,
+        appSettings?.javaRuntimeMode ?? "auto",
         enabled,
         appSettings?.offlineUsername ?? snapshot?.activeAccount?.username ?? null,
         appSettings?.officialLauncherAutoInstall ?? false,
@@ -1664,6 +1666,7 @@ function App() {
         appSettings?.tempCacheEnabled ?? true,
         appSettings?.performanceLiteMode ?? "auto",
         appSettings?.customJavaPath ?? null,
+        appSettings?.javaRuntimeMode ?? "auto",
         appSettings?.offlineModeEnabled ?? false,
         username,
         appSettings?.officialLauncherAutoInstall ?? false,
@@ -1696,6 +1699,7 @@ function App() {
         appSettings?.tempCacheEnabled ?? true,
         appSettings?.performanceLiteMode ?? "auto",
         appSettings?.customJavaPath ?? null,
+        appSettings?.javaRuntimeMode ?? "auto",
         appSettings?.offlineModeEnabled ?? false,
         appSettings?.offlineUsername ?? null,
         enabled,
@@ -1737,6 +1741,7 @@ function App() {
         appSettings?.tempCacheEnabled ?? true,
         appSettings?.performanceLiteMode ?? "auto",
         selected,
+        appSettings?.javaRuntimeMode ?? "auto",
         appSettings?.offlineModeEnabled ?? false,
         appSettings?.offlineUsername ?? null,
         appSettings?.officialLauncherAutoInstall ?? false,
@@ -1754,6 +1759,7 @@ function App() {
         appSettings?.tempCacheEnabled ?? true,
         appSettings?.performanceLiteMode ?? "auto",
         null,
+        appSettings?.javaRuntimeMode ?? "auto",
         appSettings?.offlineModeEnabled ?? false,
         appSettings?.offlineUsername ?? null,
         appSettings?.officialLauncherAutoInstall ?? false,
@@ -1762,6 +1768,24 @@ function App() {
       await refreshSettingsState();
     } catch (error) {
       pushNotice("error", errorMessage(error, "Java の直接指定を解除できませんでした。"));
+    }
+  }
+
+  async function handleChangeJavaRuntimeMode(mode: AppSettings["javaRuntimeMode"]) {
+    try {
+      const result = await launcherApi.updateAppSettings(
+        appSettings?.tempCacheEnabled ?? true,
+        appSettings?.performanceLiteMode ?? "auto",
+        appSettings?.customJavaPath ?? null,
+        mode ?? "auto",
+        appSettings?.offlineModeEnabled ?? false,
+        appSettings?.offlineUsername ?? null,
+        appSettings?.officialLauncherAutoInstall ?? false,
+      );
+      pushNotice("success", result.message);
+      await refreshSettingsState();
+    } catch (error) {
+      pushNotice("error", errorMessage(error, "JVM 選択を保存できませんでした。"));
     }
   }
 
@@ -2334,6 +2358,7 @@ function App() {
           onToggleOfficialLauncherAutoInstall={(enabled) => void handleToggleOfficialLauncherAutoInstall(enabled)}
           onEnsureOfficialLauncher={(reinstall) => void handleEnsureOfficialLauncher(reinstall)}
           onEnsureJavaRuntime={() => void handleEnsureJavaRuntime()}
+          onChangeJavaRuntimeMode={(mode) => void handleChangeJavaRuntimeMode(mode)}
           onSelectCustomJavaPath={() => void handleSelectCustomJavaPath()}
           onClearCustomJavaPath={() => void handleClearCustomJavaPath()}
           onRefreshStatus={() => void refreshSettingsState()}

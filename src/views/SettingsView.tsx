@@ -11,6 +11,7 @@ type SettingsViewProps = {
   onToggleOfficialLauncherAutoInstall: (enabled: boolean) => void;
   onEnsureOfficialLauncher: (reinstall?: boolean) => void;
   onEnsureJavaRuntime: () => void;
+  onChangeJavaRuntimeMode: (mode: NonNullable<AppSettings["javaRuntimeMode"]>) => void;
   onSelectCustomJavaPath: () => void;
   onClearCustomJavaPath: () => void;
   onRefreshStatus: () => void;
@@ -27,6 +28,7 @@ export function SettingsView({
   onToggleOfficialLauncherAutoInstall,
   onEnsureOfficialLauncher,
   onEnsureJavaRuntime,
+  onChangeJavaRuntimeMode,
   onSelectCustomJavaPath,
   onClearCustomJavaPath,
   onRefreshStatus,
@@ -39,6 +41,7 @@ export function SettingsView({
     ? "キャッシュ最適化: 稼働中"
     : "キャッシュ最適化: 停止中";
   const customJavaPath = settings?.customJavaPath ?? status?.customJavaPath ?? "";
+  const javaRuntimeMode = settings?.javaRuntimeMode ?? status?.javaRuntimeMode ?? "auto";
   const officialLauncherAutoInstall = settings?.officialLauncherAutoInstall ?? false;
 
   return (
@@ -171,7 +174,61 @@ export function SettingsView({
       <div className="settings-section">
         <h3 className="settings-section-title">☕ 実行環境</h3>
         <div className="panel">
+          <div className="settings-field-header" style={{ marginBottom: 14 }}>
+            <div>
+              <p className="settings-field-label">JVM 選択</p>
+              <p className="settings-field-desc">
+                通常は自動推奨です。必要な場合だけ Java 17 / 21 / 25 を固定できます。
+              </p>
+            </div>
+          </div>
+          <div className="segmented" role="group" aria-label="JVM 選択">
+            <button
+              type="button"
+              className={javaRuntimeMode === "auto" ? "is-active" : ""}
+              onClick={() => onChangeJavaRuntimeMode("auto")}
+              disabled={busy || !settings}
+            >
+              自動
+            </button>
+            <button
+              type="button"
+              className={javaRuntimeMode === "java17" ? "is-active" : ""}
+              onClick={() => onChangeJavaRuntimeMode("java17")}
+              disabled={busy || !settings}
+            >
+              Java 17
+            </button>
+            <button
+              type="button"
+              className={javaRuntimeMode === "java21" ? "is-active" : ""}
+              onClick={() => onChangeJavaRuntimeMode("java21")}
+              disabled={busy || !settings}
+            >
+              Java 21
+            </button>
+            <button
+              type="button"
+              className={javaRuntimeMode === "java25" ? "is-active" : ""}
+              onClick={() => onChangeJavaRuntimeMode("java25")}
+              disabled={busy || !settings}
+            >
+              Java 25
+            </button>
+          </div>
           <div className="settings-path-list">
+            <div className="settings-path-row">
+              <span className="settings-path-label">JVM モード</span>
+              <code className="settings-path-value">
+                {javaRuntimeMode === "auto"
+                  ? "自動（Minecraft バージョンに合わせる）"
+                  : javaRuntimeMode === "java17"
+                    ? "Java 17 に固定"
+                    : javaRuntimeMode === "java21"
+                      ? "Java 21 に固定"
+                      : "Java 25 に固定"}
+              </code>
+            </div>
             <div className="settings-path-row">
               <span className="settings-path-label">Java ランタイム</span>
               <code className="settings-path-value">{status?.javaRuntimeDir ?? "取得中..."}</code>

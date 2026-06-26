@@ -294,6 +294,7 @@ export type AppSettings = {
   tempCacheEnabled: boolean;
   performanceLiteMode: "auto" | "on" | "off";
   customJavaPath?: string | null;
+  javaRuntimeMode?: "auto" | "java17" | "java21" | "java25";
   offlineModeEnabled?: boolean;
   offlineUsername?: string | null;
   officialLauncherAutoInstall?: boolean;
@@ -304,6 +305,7 @@ export type SoftwareStatus = {
   cacheDir: string;
   settingsPath: string;
   javaRuntimeDir: string;
+  javaRuntimeMode?: "auto" | "java17" | "java21" | "java25";
   customJavaPath?: string | null;
   officialLauncherAvailable?: boolean;
   officialLauncherInstaller?: string;

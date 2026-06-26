@@ -16,6 +16,11 @@ struct JavaRuntimeSpec {
 
 const MANAGED_JAVA_RUNTIMES: &[JavaRuntimeSpec] = &[
     JavaRuntimeSpec {
+        major: 17,
+        download_url:
+            "https://api.adoptium.net/v3/binary/latest/17/ga/windows/x64/jre/hotspot/normal/eclipse?project=jdk",
+    },
+    JavaRuntimeSpec {
         major: 21,
         download_url:
             "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse?project=jdk",
@@ -24,26 +29,6 @@ const MANAGED_JAVA_RUNTIMES: &[JavaRuntimeSpec] = &[
         major: 25,
         download_url:
             "https://api.adoptium.net/v3/binary/latest/25/ga/windows/x64/jre/hotspot/normal/eclipse?project=jdk",
-    },
-];
-
-#[derive(Debug, Clone, Copy)]
-struct JavaRuntimeRule {
-    minecraft_major: u32,
-    minecraft_minor_or_newer: u32,
-    java_major: u32,
-}
-
-const JAVA_RUNTIME_RULES: &[JavaRuntimeRule] = &[
-    JavaRuntimeRule {
-        minecraft_major: 1,
-        minecraft_minor_or_newer: 26,
-        java_major: 25,
-    },
-    JavaRuntimeRule {
-        minecraft_major: 26,
-        minecraft_minor_or_newer: 0,
-        java_major: 25,
     },
 ];
 
@@ -85,37 +70,50 @@ pub(super) fn find_game_java_executable_for_version(
     game_version: Option<&str>,
 ) -> Result<PathBuf, String> {
     let required_major = required_java_major_for_versions(version_id, game_version);
+    let settings = settings::load_settings();
+    let selected_major = settings::java_runtime_major_for_mode(&settings.java_runtime_mode);
+    if let Some(major) = selected_major {
+        if major != required_major {
+            crate::app_log::append_log(
+                "WARN",
+                format!(
+                    "Java runtime mode forced Java {} for Minecraft {} / {:?}; auto recommendation was Java {}",
+                    major, version_id, game_version, required_major
+                ),
+            );
+        }
+    }
+    let required_major = selected_major.unwrap_or(required_major);
     let runtime = managed_java_runtime_for_major(required_major);
 
     if let Some(java) = custom_java_executable()? {
-        if runtime.major >= 25 {
-            match java_major_version(&java) {
-                Some(major) if major >= runtime.major => {}
-                Some(major) => {
-                    crate::app_log::append_log(
-                        "WARN",
-                        format!(
-                            "custom Java {} is too old for Minecraft {} / {:?}; using managed Java {}",
-                            major,
-                            version_id,
-                            game_version,
-                            runtime.major
-                        ),
-                    );
-                    return managed_game_java_executable(runtime);
-                }
-                None => {
-                    crate::app_log::append_log(
-                        "WARN",
-                        format!(
-                            "custom Java version could not be detected for Minecraft {} / {:?}; using managed Java {}",
-                            version_id,
-                            game_version,
-                            runtime.major
-                        ),
-                    );
-                    return managed_game_java_executable(runtime);
-                }
+        match java_major_version(&java) {
+            Some(major) if major == runtime.major => {}
+            Some(major) => {
+                crate::app_log::append_log(
+                    "WARN",
+                    format!(
+                        "custom Java {} does not match required Java {} for Minecraft {} / {:?}; using managed Java {}",
+                        major,
+                        runtime.major,
+                        version_id,
+                        game_version,
+                        runtime.major
+                    ),
+                );
+                return managed_game_java_executable(runtime);
+            }
+            None => {
+                crate::app_log::append_log(
+                    "WARN",
+                    format!(
+                        "custom Java version could not be detected for Minecraft {} / {:?}; using managed Java {}",
+                        version_id,
+                        game_version,
+                        runtime.major
+                    ),
+                );
+                return managed_game_java_executable(runtime);
             }
         }
         if cfg!(target_os = "windows") {
@@ -200,44 +198,24 @@ fn java_major_version(java: &Path) -> Option<u32> {
 }
 
 fn required_java_major_for_versions(version_id: &str, game_version: Option<&str>) -> u32 {
-    [Some(version_id), game_version]
-        .into_iter()
-        .flatten()
-        .filter_map(required_java_major_for_minecraft_version)
-        .max()
+    game_version
+        .and_then(required_java_major_for_minecraft_version)
+        .or_else(|| required_java_major_for_minecraft_version(version_id))
         .unwrap_or(default_java_runtime().major)
 }
 
 fn required_java_major_for_minecraft_version(value: &str) -> Option<u32> {
-    let versions = extract_version_number_candidates(value);
-    let mut required = None;
-
-    for version in versions {
-        for rule in JAVA_RUNTIME_RULES {
-            let matches = if rule.minecraft_major == 1 {
-                version.major == 1 && version.minor.is_some_and(|minor| minor >= rule.minecraft_minor_or_newer)
-            } else {
-                version.major >= rule.minecraft_major
-            };
-
-            if matches {
-                required = Some(required.unwrap_or(default_java_runtime().major).max(rule.java_major));
-            }
-        }
-    }
-
-    required
+    extract_minecraft_version_candidate(value).map(required_java_major_for_minecraft_candidate)
 }
 
 #[derive(Debug, Clone, Copy)]
 struct VersionNumberCandidate {
     major: u32,
     minor: Option<u32>,
+    patch: Option<u32>,
 }
 
-fn extract_version_number_candidates(value: &str) -> Vec<VersionNumberCandidate> {
-    let mut candidates = Vec::new();
-
+fn extract_minecraft_version_candidate(value: &str) -> Option<VersionNumberCandidate> {
     for token in value.split(|character: char| !character.is_ascii_digit() && character != '.') {
         let trimmed = token.trim_matches('.');
         if trimmed.is_empty() || !trimmed.chars().any(|character| character.is_ascii_digit()) {
@@ -251,13 +229,49 @@ fn extract_version_number_candidates(value: &str) -> Vec<VersionNumberCandidate>
         let Some(major) = parts.first().copied() else {
             continue;
         };
-        candidates.push(VersionNumberCandidate {
+        let candidate = VersionNumberCandidate {
             major,
             minor: parts.get(1).copied(),
-        });
+            patch: parts.get(2).copied(),
+        };
+
+        if looks_like_minecraft_version(candidate) {
+            return Some(candidate);
+        }
     }
 
-    candidates
+    None
+}
+
+fn looks_like_minecraft_version(version: VersionNumberCandidate) -> bool {
+    if version.major == 1 {
+        return version.minor.is_some_and(|minor| minor <= 99);
+    }
+
+    (2..=25).contains(&version.major)
+}
+
+fn required_java_major_for_minecraft_candidate(version: VersionNumberCandidate) -> u32 {
+    if version.major >= 26 {
+        return 25;
+    }
+
+    if version.major >= 2 {
+        return 21;
+    }
+
+    let minor = version.minor.unwrap_or_default();
+    let patch = version.patch.unwrap_or_default();
+
+    if minor >= 26 {
+        25
+    } else if minor >= 21 || (minor == 20 && patch >= 5) {
+        21
+    } else if minor >= 18 {
+        17
+    } else {
+        default_java_runtime().major
+    }
 }
 
 fn custom_java_executable() -> Result<Option<PathBuf>, String> {
@@ -297,7 +311,11 @@ pub(super) fn ensure_java_runtime_available_with_progress(
 pub(super) fn ensure_managed_java_runtime(
     progress: Option<(&AppHandle, &str)>,
 ) -> Result<PathBuf, String> {
-    ensure_managed_java_runtime_for(default_java_runtime(), progress)
+    let settings = settings::load_settings();
+    let runtime = settings::java_runtime_major_for_mode(&settings.java_runtime_mode)
+        .map(managed_java_runtime_for_major)
+        .unwrap_or_else(default_java_runtime);
+    ensure_managed_java_runtime_for(runtime, progress)
 }
 
 fn ensure_managed_java_runtime_for(

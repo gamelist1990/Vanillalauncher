@@ -41,6 +41,7 @@ export function LocalModImportModal({
   const [installing, setInstalling] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const analysisCacheRef = useRef<Map<string, LocalModAnalysis>>(new Map());
 
   const installable = useMemo(
     () => analyses.filter((item) => item.compatible && ["install", "replace"].includes(item.action)),
@@ -88,6 +89,7 @@ export function LocalModImportModal({
       setAnalyzing(false);
       setInstalling(false);
       setDragOver(false);
+      analysisCacheRef.current.clear();
     }
   }, [openModal]);
 
@@ -96,13 +98,37 @@ export function LocalModImportModal({
     setAnalyzing(true);
     try {
       const results: LocalModAnalysis[] = [];
-      for (const path of paths) {
-        try {
-          results.push(await launcherApi.analyzeLocalMod(profileId, path));
-        } catch (error) {
-          onError(error instanceof Error ? error.message : String(error));
+      const uniquePaths = Array.from(new Set(paths.filter((path) => path.toLowerCase().endsWith(".jar"))));
+      const pendingPaths: string[] = [];
+
+      for (const path of uniquePaths) {
+        const cacheKey = `${profileId}:${path}`;
+        const cached = analysisCacheRef.current.get(cacheKey);
+        if (cached) {
+          results.push(cached);
+        } else {
+          pendingPaths.push(path);
         }
       }
+
+      const queue = [...pendingPaths];
+      const workerCount = Math.min(4, queue.length);
+      await Promise.all(
+        Array.from({ length: workerCount }, async () => {
+          while (queue.length > 0) {
+            const path = queue.shift();
+            if (!path) return;
+            try {
+              const result = await launcherApi.analyzeLocalMod(profileId, path);
+              analysisCacheRef.current.set(`${profileId}:${path}`, result);
+              results.push(result);
+            } catch (error) {
+              onError(error instanceof Error ? error.message : String(error));
+            }
+          }
+        }),
+      );
+
       setAnalyses((current) => {
         const merged = [...current];
         for (const result of results) {

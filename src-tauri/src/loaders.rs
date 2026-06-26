@@ -28,7 +28,7 @@ use serde_json::Value;
 use std::{
     collections::{HashMap, HashSet},
     env,
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -584,10 +584,38 @@ pub async fn launch_profile_directly(
         ),
     );
 
+    let logs_dir = launch_context.game_dir.join("logs");
+    fs::create_dir_all(&logs_dir)
+        .map_err(|error| format!("{} を準備できませんでした: {error}", logs_dir.display()))?;
+    let latest_log_path = logs_dir.join("latest.log");
+    let mut latest_log = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&latest_log_path)
+        .map_err(|error| format!("{} を作成できませんでした: {error}", latest_log_path.display()))?;
+    let _ = writeln!(
+        latest_log,
+        "[VanillaLauncher] direct launch started at {}",
+        chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%z")
+    );
+    let _ = writeln!(
+        latest_log,
+        "[VanillaLauncher] java: {}",
+        launch_context.java_path.display()
+    );
+    let stderr_log = latest_log
+        .try_clone()
+        .map_err(|error| format!("Minecraft ログ出力を準備できませんでした: {error}"))?;
+    command
+        .stdout(Stdio::from(latest_log))
+        .stderr(Stdio::from(stderr_log));
+    app_log::append_log(
+        "INFO",
+        format!("direct launch stdout/stderr redirected to {}", latest_log_path.display()),
+    );
+
     suppress_console_window(&mut command);
-    if cfg!(not(debug_assertions)) {
-        command.stdout(Stdio::null()).stderr(Stdio::null());
-    }
     let child = command
         .spawn()
         .map_err(|error| format!("Minecraft Java を直接起動できませんでした: {error}"))?;

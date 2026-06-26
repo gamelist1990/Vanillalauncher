@@ -79,6 +79,7 @@ type AppMainContentProps = {
   onToggleOfficialLauncherAutoInstall: (enabled: boolean) => void;
   onEnsureOfficialLauncher: (reinstall?: boolean) => void;
   onEnsureJavaRuntime: () => void;
+  onChangeJavaRuntimeMode: (mode: NonNullable<AppSettings["javaRuntimeMode"]>) => void;
   onSelectCustomJavaPath: () => void;
   onClearCustomJavaPath: () => void;
   onRefreshStatus: () => void;
@@ -148,6 +149,7 @@ export function AppMainContent({
   onToggleOfficialLauncherAutoInstall,
   onEnsureOfficialLauncher,
   onEnsureJavaRuntime,
+  onChangeJavaRuntimeMode,
   onSelectCustomJavaPath,
   onClearCustomJavaPath,
   onRefreshStatus,
@@ -245,6 +247,7 @@ export function AppMainContent({
           onToggleOfficialLauncherAutoInstall={onToggleOfficialLauncherAutoInstall}
           onEnsureOfficialLauncher={onEnsureOfficialLauncher}
           onEnsureJavaRuntime={onEnsureJavaRuntime}
+          onChangeJavaRuntimeMode={onChangeJavaRuntimeMode}
           onSelectCustomJavaPath={onSelectCustomJavaPath}
           onClearCustomJavaPath={onClearCustomJavaPath}
           onRefreshStatus={onRefreshStatus}

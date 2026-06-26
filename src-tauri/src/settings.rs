@@ -26,12 +26,36 @@ fn default_performance_lite_mode() -> PerformanceLiteMode {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub enum JavaRuntimeMode {
+    Auto,
+    Java17,
+    Java21,
+    Java25,
+}
+
+fn default_java_runtime_mode() -> JavaRuntimeMode {
+    JavaRuntimeMode::Auto
+}
+
+pub fn java_runtime_major_for_mode(mode: &JavaRuntimeMode) -> Option<u32> {
+    match mode {
+        JavaRuntimeMode::Auto => None,
+        JavaRuntimeMode::Java17 => Some(17),
+        JavaRuntimeMode::Java21 => Some(21),
+        JavaRuntimeMode::Java25 => Some(25),
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     pub temp_cache_enabled: bool,
     #[serde(default = "default_performance_lite_mode")]
     pub performance_lite_mode: PerformanceLiteMode,
     #[serde(default)]
     pub custom_java_path: Option<String>,
+    #[serde(default = "default_java_runtime_mode")]
+    pub java_runtime_mode: JavaRuntimeMode,
     #[serde(default)]
     pub offline_mode_enabled: bool,
     #[serde(default)]
@@ -47,6 +71,7 @@ pub struct SoftwareStatus {
     pub cache_dir: String,
     pub settings_path: String,
     pub java_runtime_dir: String,
+    pub java_runtime_mode: JavaRuntimeMode,
     pub custom_java_path: Option<String>,
     pub official_launcher_available: bool,
     pub official_launcher_installer: String,
@@ -131,6 +156,7 @@ pub fn default_settings() -> AppSettings {
         temp_cache_enabled: true,
         performance_lite_mode: PerformanceLiteMode::Auto,
         custom_java_path: None,
+        java_runtime_mode: JavaRuntimeMode::Auto,
         offline_mode_enabled: false,
         offline_username: None,
         official_launcher_auto_install: false,
@@ -168,6 +194,7 @@ pub fn update_app_settings(
     temp_cache_enabled: bool,
     performance_lite_mode: PerformanceLiteMode,
     custom_java_path: Option<String>,
+    java_runtime_mode: Option<JavaRuntimeMode>,
     offline_mode_enabled: Option<bool>,
     offline_username: Option<String>,
     official_launcher_auto_install: Option<bool>,
@@ -178,6 +205,7 @@ pub fn update_app_settings(
         temp_cache_enabled,
         performance_lite_mode,
         custom_java_path,
+        java_runtime_mode: java_runtime_mode.unwrap_or(JavaRuntimeMode::Auto),
         offline_mode_enabled: offline_mode_enabled.unwrap_or(false),
         offline_username,
         official_launcher_auto_install: official_launcher_auto_install.unwrap_or(false),
@@ -274,6 +302,7 @@ pub fn get_software_status() -> Result<SoftwareStatus, String> {
         cache_dir: cache_dir().to_string_lossy().to_string(),
         settings_path: settings_path().to_string_lossy().to_string(),
         java_runtime_dir: java_runtime_dir().to_string_lossy().to_string(),
+        java_runtime_mode: settings.java_runtime_mode.clone(),
         custom_java_path: settings.custom_java_path.clone(),
         official_launcher_available: crate::minecraft::launcher_available(),
         official_launcher_installer: crate::minecraft::official_launcher_installer_path()
