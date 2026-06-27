@@ -9,8 +9,9 @@ use crate::{
         CustomProfileDraft, TrackedModProject, TrackedModSource,
     },
     models::{
-        ActionResult, InstallResult, LocalModAnalysis, ModRemoteState, ModpackExportResult,
-        ModpackInstallResult, ModpackVersionSummary, ModrinthProject, ModrinthVersion,
+        ActionResult, InstallResult, LocalModAnalysis, MissingModDependency, ModDependencyCheckResult,
+        ModRemoteState, ModpackExportResult, ModpackInstallResult, ModpackVersionSummary,
+        ModrinthProject, ModrinthVersion,
     },
     progress::emit_progress,
     settings,
@@ -405,6 +406,103 @@ pub async fn install_modrinth_project(
         message: format!("{} に {} を導入しました。", profile.name, version.name),
         file_name: file.filename.clone(),
         version_name: version.version_number.clone(),
+    })
+}
+
+pub async fn check_modrinth_project_dependencies(
+    profile_id: String,
+    project_id: String,
+) -> Result<ModDependencyCheckResult, String> {
+    if parse_curseforge_project_id(&project_id).is_some() {
+        return Ok(ModDependencyCheckResult {
+            project_id,
+            version_id: String::new(),
+            version_name: String::new(),
+            missing_dependencies: Vec::new(),
+        });
+    }
+
+    let profile = find_profile(&profile_id)?;
+    let normalized_loader = normalize_loader(Some(&profile.loader));
+
+    if normalized_loader == "vanilla" {
+        return Err(
+            "この起動構成はまだ Vanilla です。先に Fabric / Forge / NeoForge / Quilt を導入してください。"
+                .to_string(),
+        );
+    }
+
+    let client = modrinth_client()?;
+    let release = fetch_compatible_release(
+        &client,
+        &project_id,
+        &normalized_loader,
+        profile.game_version.as_deref(),
+    )
+    .await
+    .map_err(|error| match error.as_str() {
+        "missing-compatible-file" => format!(
+            "{} / {} に対応する配布ファイルが見つかりませんでした。",
+            profile.loader,
+            profile
+                .game_version
+                .clone()
+                .unwrap_or_else(|| "現在の Minecraft バージョン".to_string())
+        ),
+        _ => error,
+    })?;
+
+    let mut installed_project_ids = tracked_project_entries(&profile_id)?
+        .into_iter()
+        .filter_map(|entry| {
+            let id = entry.project_id.trim().to_string();
+            if id.is_empty() { None } else { Some(id) }
+        })
+        .collect::<Vec<_>>();
+    installed_project_ids.extend(
+        profile
+            .mods
+            .iter()
+            .filter_map(|entry| entry.source_project_id.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+    );
+
+    let mut missing_dependencies = Vec::new();
+    for dependency in &release.version.dependencies {
+        if !dependency.dependency_type.eq_ignore_ascii_case("required") {
+            continue;
+        }
+
+        let Some(dependency_project_id) = dependency.project_id.as_deref().map(str::trim).filter(|value| !value.is_empty()) else {
+            continue;
+        };
+
+        if dependency_project_id == project_id
+            || installed_project_ids.iter().any(|installed| installed == dependency_project_id)
+            || missing_dependencies
+                .iter()
+                .any(|entry: &MissingModDependency| entry.project_id == dependency_project_id)
+        {
+            continue;
+        }
+
+        let details = fetch_project_details_for_visual_cache(&client, dependency_project_id).await.ok();
+        missing_dependencies.push(MissingModDependency {
+            project_id: dependency_project_id.to_string(),
+            version_id: dependency.version_id.clone(),
+            dependency_type: dependency.dependency_type.clone(),
+            title: details.as_ref().map(|project| project.title.clone()),
+            project_url: details.as_ref().map(|project| project.project_url.clone()),
+        });
+    }
+
+    Ok(ModDependencyCheckResult {
+        project_id,
+        version_id: release.version.id.clone(),
+        version_name: release.version.version_number.clone(),
+        missing_dependencies,
     })
 }
 
@@ -2005,6 +2103,8 @@ fn pick_modpack_file(version: &ModrinthVersion) -> Option<crate::models::Modrint
 }
 
 fn read_modpack_index(bytes: &[u8]) -> Result<ModpackIndex, String> {
+    validate_zip_like_modpack_bytes(bytes)?;
+
     let cursor = std::io::Cursor::new(bytes);
     let mut archive = ZipArchive::new(cursor)
         .map_err(|error| format!("Modpack アーカイブを開けませんでした: {error}"))?;
@@ -2043,6 +2143,8 @@ fn read_modpack_index(bytes: &[u8]) -> Result<ModpackIndex, String> {
 }
 
 fn read_curseforge_manifest(bytes: &[u8]) -> Result<CurseforgeManifest, String> {
+    validate_zip_like_modpack_bytes(bytes)?;
+
     let cursor = std::io::Cursor::new(bytes);
     let mut archive = ZipArchive::new(cursor)
         .map_err(|error| format!("Modpack アーカイブを開けませんでした: {error}"))?;
@@ -2059,6 +2161,40 @@ fn read_curseforge_manifest(bytes: &[u8]) -> Result<CurseforgeManifest, String> 
         .map_err(|error| format!("manifest.json を読み込めませんでした: {error}"))?;
     serde_json::from_str(&contents)
         .map_err(|error| format!("manifest.json を解析できませんでした: {error}"))
+}
+
+fn validate_zip_like_modpack_bytes(bytes: &[u8]) -> Result<(), String> {
+    if bytes.len() < 4 {
+        return Err(
+            "Modpack アーカイブを開けませんでした: ファイルが空、または破損しています。".to_string(),
+        );
+    }
+
+    if bytes.starts_with(b"PK\x03\x04")
+        || bytes.starts_with(b"PK\x05\x06")
+        || bytes.starts_with(b"PK\x07\x08")
+    {
+        return Ok(());
+    }
+
+    if bytes.starts_with(b"<!DOCTYPE html")
+        || bytes.starts_with(b"<!doctype html")
+        || bytes.starts_with(b"<html")
+    {
+        return Err(
+            "Modpack アーカイブを開けませんでした: ZIP / mrpack ではなく HTML ファイルのようです。ブラウザーの保存ページではなく、Modpack の .mrpack または CurseForge の .zip を選択してください。".to_string(),
+        );
+    }
+
+    if bytes.starts_with(b"{\"") || bytes.starts_with(b"{") {
+        return Err(
+            "Modpack アーカイブを開けませんでした: JSON ファイル単体のようです。manifest.json や modrinth.index.json ではなく、それらを含む .zip / .mrpack アーカイブを選択してください。".to_string(),
+        );
+    }
+
+    Err(
+        "Modpack アーカイブを開けませんでした: ZIP / mrpack 形式として認識できません。ファイルが破損していないか、Modrinth の .mrpack または CurseForge の .zip を選択しているか確認してください。".to_string(),
+    )
 }
 
 fn find_zip_entry_index_by_file_name<R: std::io::Read + std::io::Seek>(
@@ -3141,6 +3277,25 @@ fn parse_version_entry(value: &Value) -> Option<ModrinthVersion> {
         published_at: value_to_string(value.get("date_published"))
             .or_else(|| value_to_string(value.get("published"))),
         files,
+        dependencies: value
+            .get("dependencies")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(parse_version_dependency)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default(),
+    })
+}
+
+fn parse_version_dependency(value: &Value) -> Option<crate::models::ModrinthDependency> {
+    Some(crate::models::ModrinthDependency {
+        version_id: value_to_string(value.get("version_id")),
+        project_id: value_to_string(value.get("project_id")),
+        dependency_type: value_to_string(value.get("dependency_type"))
+            .unwrap_or_else(|| "required".to_string()),
     })
 }
 

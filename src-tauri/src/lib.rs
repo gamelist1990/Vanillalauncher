@@ -8,9 +8,9 @@ mod settings;
 
 use models::{
     ActionResult, FabricCatalog, FabricInstallResult, InstallResult, LaunchResult,
-    LauncherSnapshot, LoaderCatalog, LoaderInstallResult, LocalModAnalysis, ModRemoteState, ModpackExportResult,
-    ModpackInstallResult, ModpackVersionSummary, ModrinthProject, XboxRpsStateResult,
-    XboxSignInResult,
+    LauncherSnapshot, LoaderCatalog, LoaderInstallResult, LocalModAnalysis,
+    ModDependencyCheckResult, ModRemoteState, ModpackExportResult, ModpackInstallResult,
+    ModpackVersionSummary, ModrinthProject, XboxRpsStateResult, XboxSignInResult,
 };
 use settings::{AppSettings, DebugExportResult, PerformanceLiteMode, SoftwareStatus};
 
@@ -98,6 +98,14 @@ async fn install_modrinth_project(
     operation_id: Option<String>,
 ) -> Result<InstallResult, String> {
     modrinth::install_modrinth_project(&app, profile_id, project_id, operation_id).await
+}
+
+#[tauri::command]
+async fn check_modrinth_project_dependencies(
+    profile_id: String,
+    project_id: String,
+) -> Result<ModDependencyCheckResult, String> {
+    modrinth::check_modrinth_project_dependencies(profile_id, project_id).await
 }
 
 #[tauri::command]
@@ -440,6 +448,7 @@ pub fn run() {
             search_modrinth_modpacks,
             get_modrinth_modpack_versions,
             install_modrinth_project,
+            check_modrinth_project_dependencies,
             get_profile_mod_remote_states,
             get_profile_mod_remote_state,
             get_profile_mod_visual_state,

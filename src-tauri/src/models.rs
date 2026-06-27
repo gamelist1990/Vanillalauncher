@@ -149,6 +149,25 @@ pub struct InstallResult {
     pub version_name: String,
 }
 
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct MissingModDependency {
+    pub project_id: String,
+    pub version_id: Option<String>,
+    pub dependency_type: String,
+    pub title: Option<String>,
+    pub project_url: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ModDependencyCheckResult {
+    pub project_id: String,
+    pub version_id: String,
+    pub version_name: String,
+    pub missing_dependencies: Vec<MissingModDependency>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModpackInstallResult {
@@ -306,6 +325,15 @@ pub struct ModrinthVersion {
     pub game_versions: Vec<String>,
     pub published_at: Option<String>,
     pub files: Vec<ModrinthFile>,
+    pub dependencies: Vec<ModrinthDependency>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ModrinthDependency {
+    pub version_id: Option<String>,
+    pub project_id: Option<String>,
+    pub dependency_type: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]

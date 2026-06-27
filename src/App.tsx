@@ -16,6 +16,7 @@ import type {
   LoaderCatalog,
   LoaderId,
   LauncherSnapshot,
+  MissingModDependency,
   ModRemoteState,
   ModpackExportFormat,
   ModpackExportResult,
@@ -1083,6 +1084,54 @@ function App() {
     }
   }
 
+  async function installProjectWithDependencies(
+    project: ModrinthProject,
+    dependencies: MissingModDependency[],
+  ) {
+    if (!selectedProfile) {
+      return;
+    }
+
+    setBusyAction(`install:${project.projectId}`);
+    const completedOperationIds: string[] = [];
+
+    try {
+      for (const dependency of dependencies) {
+        const dependencyOperationId = createOperationId("install-dependency");
+        completedOperationIds.push(dependencyOperationId);
+        await launcherApi.installProject(
+          selectedProfile.id,
+          dependency.projectId,
+          dependencyOperationId,
+        );
+      }
+
+      const operationId = createOperationId("install");
+      completedOperationIds.push(operationId);
+      const result = await launcherApi.installProject(
+        selectedProfile.id,
+        project.projectId,
+        operationId,
+      );
+
+      pushNotice(
+        "success",
+        `${dependencies.length} 個の依存関係を追加してから、${result.message} バージョン ${result.versionName}。`,
+      );
+      await refreshLauncher(selectedProfile.id);
+    } catch (error) {
+      pushNotice(
+        "error",
+        errorMessage(error, "依存関係または Mod を導入できませんでした。"),
+      );
+    } finally {
+      for (const operationId of completedOperationIds) {
+        scheduleProgressClear(operationId);
+      }
+      setBusyAction(null);
+    }
+  }
+
   async function executeProjectAction(
     project: ModrinthProject,
     installedMod: InstalledMod | null,
@@ -1100,6 +1149,43 @@ function App() {
         "Vanilla 構成には Mod を直接入れられません。先に Fabric / Forge / NeoForge / Quilt を導入してください。",
       );
       return;
+    }
+
+    if (!installed && project.source === "modrinth") {
+      setBusyAction(`dependency-check:${project.projectId}`);
+
+      try {
+        const dependencyCheck = await launcherApi.checkProjectDependencies(
+          selectedProfile.id,
+          project.projectId,
+        );
+        const missingDependencies = dependencyCheck.missingDependencies;
+
+        if (missingDependencies.length > 0) {
+          const dependencyNames = missingDependencies
+            .map((dependency) => dependency.title ?? dependency.projectId)
+            .slice(0, 8)
+            .join("、");
+          const remainingCount = Math.max(0, missingDependencies.length - 8);
+          setConfirmDialog({
+            title: "不足している依存関係があります",
+            description: `${project.title} の導入には ${dependencyNames}${
+              remainingCount > 0 ? ` ほか ${remainingCount} 件` : ""
+            } が必要です。依存関係も自動で導入してから、この Mod を導入しますか？`,
+            confirmLabel: "依存関係も入れる",
+            tone: "accent",
+            onConfirm: async () => {
+              await installProjectWithDependencies(project, missingDependencies);
+            },
+          });
+          return;
+        }
+      } catch (error) {
+        pushNotice("error", errorMessage(error, "依存関係を確認できませんでした。"));
+        return;
+      } finally {
+        setBusyAction(null);
+      }
     }
 
     setBusyAction(`${actionKey}:${project.projectId}`);

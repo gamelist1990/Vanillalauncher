@@ -73,7 +73,15 @@ pub(super) fn find_game_java_executable_for_version(
     let settings = settings::load_settings();
     let selected_major = settings::java_runtime_major_for_mode(&settings.java_runtime_mode);
     if let Some(major) = selected_major {
-        if major != required_major {
+        if major < required_major {
+            crate::app_log::append_log(
+                "WARN",
+                format!(
+                    "Java runtime mode forced Java {} for Minecraft {} / {:?}, but Java {} or newer is required; using managed Java {}",
+                    major, version_id, game_version, required_major, required_major
+                ),
+            );
+        } else if major != required_major {
             crate::app_log::append_log(
                 "WARN",
                 format!(
@@ -83,7 +91,9 @@ pub(super) fn find_game_java_executable_for_version(
             );
         }
     }
-    let required_major = selected_major.unwrap_or(required_major);
+    let required_major = selected_major
+        .filter(|major| *major >= required_major)
+        .unwrap_or(required_major);
     let runtime = managed_java_runtime_for_major(required_major);
 
     if let Some(java) = custom_java_executable()? {
@@ -248,7 +258,7 @@ fn looks_like_minecraft_version(version: VersionNumberCandidate) -> bool {
         return version.minor.is_some_and(|minor| minor <= 99);
     }
 
-    (2..=25).contains(&version.major)
+    (2..=99).contains(&version.major)
 }
 
 fn required_java_major_for_minecraft_candidate(version: VersionNumberCandidate) -> u32 {

@@ -156,6 +156,21 @@ export type InstallResult = {
   versionName: string;
 };
 
+export type MissingModDependency = {
+  projectId: string;
+  versionId?: string | null;
+  dependencyType: string;
+  title?: string | null;
+  projectUrl?: string | null;
+};
+
+export type ModDependencyCheckResult = {
+  projectId: string;
+  versionId: string;
+  versionName: string;
+  missingDependencies: MissingModDependency[];
+};
+
 export type ModpackInstallResult = {
   message: string;
   profileId: string;

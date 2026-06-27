@@ -3756,18 +3756,29 @@ fn looks_like_loader_version(value: &str) -> bool {
 }
 
 fn parse_neoforge_minecraft_version(value: &str) -> Option<String> {
-    let mut parts = value.split('.');
-    let major = parts.next()?;
-    let minor = parts.next()?;
+    let prefix = value.split('-').next().unwrap_or(value);
+    let parts = prefix.split('.').collect::<Vec<_>>();
+    let major = *parts.first()?;
+    let minor = *parts.get(1)?;
 
-    if major.len() != 2
-        || !major.chars().all(|character| character.is_ascii_digit())
+    if !major.chars().all(|character| character.is_ascii_digit())
         || !minor.chars().all(|character| character.is_ascii_digit())
     {
         return None;
     }
 
-    Some(format!("1.{major}.{minor}"))
+    let major_number = major.parse::<u32>().ok()?;
+    if major_number >= 26 {
+        let patch = *parts.get(2)?;
+        if !patch.chars().all(|character| character.is_ascii_digit()) {
+            return None;
+        }
+        Some(format!("{major}.{minor}.{patch}"))
+    } else if major.len() == 2 {
+        Some(format!("1.{major}.{minor}"))
+    } else {
+        None
+    }
 }
 
 fn sanitize_profile_id(value: &str) -> String {

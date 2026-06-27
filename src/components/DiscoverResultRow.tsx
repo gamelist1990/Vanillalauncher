@@ -150,24 +150,26 @@ export function DiscoverResultRow({
         </div>
       </div>
 
-      <div
-        className="discover-result-actions"
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => e.stopPropagation()}
-        role="none"
-      >
-        <button className="link-button" type="button" onClick={onOpenProject}>
-          {openLabel}
-        </button>
-        <button
-          className={installed ? "danger-button compact" : "play-button compact"}
-          type="button"
-          disabled={disabled || loading}
-          onClick={onAction}
+      {layout !== "grid" ? (
+        <div
+          className="discover-result-actions"
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+          role="none"
         >
-          {installLabel}
-        </button>
-      </div>
+          <button className="link-button" type="button" onClick={onOpenProject}>
+            {openLabel}
+          </button>
+          <button
+            className={installed ? "danger-button compact" : "play-button compact"}
+            type="button"
+            disabled={disabled || loading}
+            onClick={onAction}
+          >
+            {installLabel}
+          </button>
+        </div>
+      ) : null}
     </article>
   );
 }

@@ -917,9 +917,9 @@ async fn fetch_neoforge_loader_entries() -> Result<Vec<MavenLoaderEntry>, String
 
 fn parse_neoforge_catalog_game_version(version: &str) -> Option<String> {
     let prefix = version.split('-').next().unwrap_or(version);
-    let mut segments = prefix.split('.');
-    let major = segments.next()?;
-    let minor = segments.next()?;
+    let segments = prefix.split('.').collect::<Vec<_>>();
+    let major = *segments.first()?;
+    let minor = *segments.get(1)?;
 
     if !major.chars().all(|character| character.is_ascii_digit())
         || !minor.chars().all(|character| character.is_ascii_digit())
@@ -927,7 +927,24 @@ fn parse_neoforge_catalog_game_version(version: &str) -> Option<String> {
         return None;
     }
 
-    Some(format!("1.{major}.{minor}"))
+    // NeoForge は Minecraft 1.x 時代と 26.x 以降でバージョン体系が違う。
+    // 例:
+    // - 21.1.234       -> Minecraft 1.21.1
+    // - 21.11.x        -> Minecraft 1.21.11
+    // - 26.1.2.76      -> Minecraft 26.1.2
+    // - 26.2.0.7-beta  -> Minecraft 26.2.0
+    // 以前は常に `1.{major}.{minor}` にしていたため、26.1.2 系が `1.26.1` 扱いになり、
+    // 最新 Minecraft が 1.21.11 のままになる問題があった。
+    let major_number = major.parse::<u32>().ok()?;
+    if major_number >= 26 {
+        let patch = *segments.get(2)?;
+        if !patch.chars().all(|character| character.is_ascii_digit()) {
+            return None;
+        }
+        Some(format!("{major}.{minor}.{patch}"))
+    } else {
+        Some(format!("1.{major}.{minor}"))
+    }
 }
 
 fn normalize_catalog_game_version(value: &str) -> String {

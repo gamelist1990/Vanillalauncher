@@ -12,6 +12,7 @@ import type {
   LoaderId,
   LoaderInstallResult,
   LauncherSnapshot,
+  ModDependencyCheckResult,
   ModRemoteState,
   ModpackExportResult,
   ModpackExportFormat,
@@ -52,6 +53,11 @@ export const launcherApi = {
     }),
   installProject: (profileId: string, projectId: string, operationId?: string) =>
     invoke<InstallResult>("install_modrinth_project", { profileId, projectId, operationId }),
+  checkProjectDependencies: (profileId: string, projectId: string) =>
+    invoke<ModDependencyCheckResult>("check_modrinth_project_dependencies", {
+      profileId,
+      projectId,
+    }),
   getProfileModRemoteStates: (profileId: string) =>
     invoke<ModRemoteState[]>("get_profile_mod_remote_states", { profileId }),
   getProfileModRemoteState: (profileId: string, fileName: string) =>
